@@ -7,6 +7,10 @@ export async function withTeacher(fn: (teacher: Teacher) => Promise<unknown>): P
     const result = await fn(teacher);
     return Response.json(result ?? { ok: true });
   } catch (e) {
+    // בזמן build הבקשה נקטעת בכוונה על ידי Next (הבטחה תלויה): לא שגיאה אמיתית, ולא מדפיסים אותה.
+    if (e && typeof e === "object" && (e as { digest?: string }).digest === "HANGING_PROMISE_REJECTION") {
+      throw e;
+    }
     return errorResponse(e);
   }
 }

@@ -20,9 +20,20 @@ export default function Dashboard() {
   const [className, setClassName] = useState("");
   const [subjectName, setSubjectName] = useState("");
   const [error, setError] = useState("");
+  const [loggedOut, setLoggedOut] = useState(false);
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.reload();
+  }
 
   async function load() {
     const res = await fetch("/api/groups");
+    if (res.status === 401) {
+      setLoggedOut(true);
+      setGroups([]);
+      return;
+    }
     if (!res.ok) {
       setError("לא הצלחנו לטעון את הקבוצות");
       setGroups([]);
@@ -55,13 +66,32 @@ export default function Dashboard() {
     await load();
   }
 
+  if (loggedOut) {
+    const failed = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("login_error");
+    return (
+      <div className="mx-auto max-w-md px-5 py-20 text-center">
+        <h1 className="text-3xl font-extrabold mb-3">הרצף של חומר פתוח</h1>
+        <p className="text-muted mb-8">נכנסים עם החשבון שלכם בחומר פתוח.</p>
+        <a href="/api/auth/start" className="btn btn-primary">
+          כניסה עם חומר פתוח
+        </a>
+        {failed && <p className="text-coral mt-6">הכניסה לא הושלמה. אפשר לנסות שוב.</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-extrabold">הקבוצות שלי</h1>
-        <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
-          <Plus size={18} strokeWidth={2} /> קבוצה חדשה
-        </button>
+        <div className="flex gap-2">
+          <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
+            <Plus size={18} strokeWidth={2} /> קבוצה חדשה
+          </button>
+          <button className="btn btn-ghost" onClick={logout}>
+            יציאה
+          </button>
+        </div>
       </div>
 
       {creating && (

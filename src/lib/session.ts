@@ -1,5 +1,7 @@
 import { eq } from "drizzle-orm";
+import { cookies } from "next/headers";
 import { getDb, tables } from "@/db";
+import { readSessionToken, SESSION_COOKIE } from "./auth";
 
 export class HttpError extends Error {
   constructor(
@@ -12,20 +14,32 @@ export class HttpError extends Error {
 
 export type Teacher = typeof tables.teachers.$inferSelect;
 
-// כניסת מורה אמיתית (גשר חומר פתוח + Google ארגוני) תיכנס בשלב הבא.
-// עד אז: מצב פיתוח בלבד, מורה אחד קבוע. בייצור בלי DEV_LOGIN=1 ובלי כניסה אמיתית: 401.
 export async function requireTeacher(): Promise<Teacher> {
-  if (process.env.DEV_LOGIN !== "1") {
-    throw new HttpError(401, "נדרשת התחברות");
-  }
+  // cookies() קודם לכל גישה ל-DB: כך בזמן build הבקשה נעצרת מיד כדינמית ולא מתחילה אתחול DB.
+  const jar = await cookies();
   const db = await getDb();
-  const existing = await db.select().from(tables.teachers).where(eq(tables.teachers.wpUserId, -1)).limit(1);
-  if (existing[0]) return existing[0];
-  const [created] = await db
-    .insert(tables.teachers)
-    .values({ displayName: "מורה לדוגמה", wpUserId: -1 })
-    .returning();
-  return created;
+
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (token) {
+    const teacherId = await readSessionToken(token);
+    if (teacherId) {
+      const [teacher] = await db.select().from(tables.teachers).where(eq(tables.teachers.id, teacherId)).limit(1);
+      if (teacher) return teacher;
+    }
+  }
+
+  // מצב פיתוח מקומי בלבד: מורה קבוע בלי כניסה. בייצור DEV_LOGIN לא מוגדר.
+  if (process.env.DEV_LOGIN === "1") {
+    const existing = await db.select().from(tables.teachers).where(eq(tables.teachers.wpUserId, -1)).limit(1);
+    if (existing[0]) return existing[0];
+    const [created] = await db
+      .insert(tables.teachers)
+      .values({ displayName: "מורה לדוגמה", wpUserId: -1 })
+      .returning();
+    return created;
+  }
+
+  throw new HttpError(401, "נדרשת התחברות");
 }
 
 export function errorResponse(e: unknown): Response {
