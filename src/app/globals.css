@@ -1,26 +1,124 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --blue: #6685f0;
+  --blue-dark: #4f6cd6;
+  --blue-soft: #eef1fe;
+  --orange: #fb8255;
+  --coral: #fb6965;
+  --ink: #1b1d22;
+  --muted: #6b7280;
+  --line: #e5e8ee;
+  --surface: #ffffff;
+  --page: #f5f6f9;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-blue: var(--blue);
+  --color-blue-dark: var(--blue-dark);
+  --color-blue-soft: var(--blue-soft);
+  --color-orange: var(--orange);
+  --color-coral: var(--coral);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-page: var(--page);
+  --font-sans: var(--font-rubik), system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-rubik), system-ui, sans-serif;
+  font-weight: 400;
+}
+
+/* כפתורי pill */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  padding: 0.5rem 1.1rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.btn-primary {
+  background: var(--blue);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--blue-dark);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+.btn-ghost:hover {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+}
+.btn-icon {
+  padding: 0.4rem;
+  border-radius: 9999px;
+  line-height: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.btn-icon:hover {
+  background: var(--blue-soft);
+  color: var(--blue-dark);
+}
+
+/* טולטיפ: נפתח מעל האלמנט, מהר */
+[data-tip] {
+  position: relative;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 0.3rem 0.7rem;
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease 0.12s, transform 0.1s ease 0.12s;
+  z-index: 50;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+input,
+textarea {
+  font-family: inherit;
+}
+.field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  padding: 0.55rem 1rem;
+  background: #fff;
+  outline: none;
+}
+.field:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
 }
