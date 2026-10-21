@@ -21,6 +21,15 @@ export default function Dashboard() {
   const [subjectName, setSubjectName] = useState("");
   const [error, setError] = useState("");
   const [loggedOut, setLoggedOut] = useState(false);
+  const [terms, setTerms] = useState<{ classes: string[]; subjects: string[] }>({ classes: [], subjects: [] });
+
+  useEffect(() => {
+    // הרשימות מגיעות מחומר פתוח עצמו, כדי שהמחסן והתיוג האוטומטי יתאימו למונחים האמיתיים.
+    fetch("/api/taxonomies")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setTerms(d))
+      .catch(() => {});
+  }, []);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -97,8 +106,22 @@ export default function Dashboard() {
       {creating && (
         <form onSubmit={create} className="bg-white border border-line rounded-3xl p-5 mb-8 grid gap-3 md:grid-cols-4">
           <input className="field md:col-span-2" placeholder="שם הקבוצה" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-          <input className="field" placeholder="כיתה" value={className} onChange={(e) => setClassName(e.target.value)} />
-          <input className="field" placeholder="תחום דעת" value={subjectName} onChange={(e) => setSubjectName(e.target.value)} />
+          <select className="field" value={className} onChange={(e) => setClassName(e.target.value)} aria-label="כיתה">
+            <option value="">כיתה</option>
+            {terms.classes.map((c) => (
+              <option key={c} value={c}>
+                כיתה {c}
+              </option>
+            ))}
+          </select>
+          <select className="field" value={subjectName} onChange={(e) => setSubjectName(e.target.value)} aria-label="תחום דעת">
+            <option value="">תחום דעת</option>
+            {terms.subjects.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
           <div className="md:col-span-4 flex gap-2">
             <button className="btn btn-primary" type="submit">
               יצירה

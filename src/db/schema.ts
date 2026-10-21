@@ -93,6 +93,8 @@ export const lessonItems = pgTable("lesson_items", {
   // רמת קושי לחומרים מדורגים: base | mid | advanced
   level: text("level"),
   isAssignment: boolean("is_assignment").notNull().default(false),
+  // משך מתוכנן בדקות (אופציונלי). סכום המשכים מוצג בכותרת השיעור.
+  minutes: integer("minutes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

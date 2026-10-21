@@ -1,4 +1,4 @@
-import { asc, eq, inArray, max } from "drizzle-orm";
+import { asc, desc, eq, inArray, max, sql } from "drizzle-orm";
 import { getDb, tables } from "@/db";
 import { HttpError } from "./session";
 import { unfurl } from "./unfurl";
@@ -187,22 +187,78 @@ async function insertItems(teacherId: number, unfurled: Awaited<ReturnType<typeo
     .returning();
 }
 
-export async function addLinksToLesson(lessonId: number, teacherId: number, urls: string[]) {
+// מוסיף פריטים לשיעור: בסוף, או במקום מסוים (index) כשגוררים מהמחסן.
+async function attachItems(lessonId: number, itemIds: number[], index?: number) {
   const db = await getDb();
-  await ownedLesson(lessonId, teacherId);
-  const unfurled = await unfurlMany(urls);
-  if (unfurled.length === 0) throw new HttpError(400, "לא נמצאו קישורים תקינים");
-  const created = await insertItems(teacherId, unfurled);
-
   const [{ top }] = await db
     .select({ top: max(lessonItems.position) })
     .from(lessonItems)
     .where(eq(lessonItems.lessonId, lessonId));
   let pos = top ?? 0;
-  return db
+  const created = await db
     .insert(lessonItems)
-    .values(created.map((it) => ({ lessonId, itemId: it.id, position: ++pos })))
+    .values(itemIds.map((itemId) => ({ lessonId, itemId, position: ++pos })))
     .returning();
+
+  if (index !== undefined) {
+    const newIds = new Set(created.map((c) => c.id));
+    const rows = await db
+      .select({ id: lessonItems.id })
+      .from(lessonItems)
+      .where(eq(lessonItems.lessonId, lessonId))
+      .orderBy(asc(lessonItems.position), asc(lessonItems.id));
+    const ordered = rows.map((r) => r.id).filter((id) => !newIds.has(id));
+    ordered.splice(Math.max(0, Math.min(index, ordered.length)), 0, ...created.map((c) => c.id));
+    for (let i = 0; i < ordered.length; i++) {
+      await db.update(lessonItems).set({ position: i + 1 }).where(eq(lessonItems.id, ordered[i]));
+    }
+  }
+  return created;
+}
+
+export async function addLinksToLesson(lessonId: number, teacherId: number, urls: string[], index?: number) {
+  await ownedLesson(lessonId, teacherId);
+  const unfurled = await unfurlMany(urls);
+  if (unfurled.length === 0) throw new HttpError(400, "לא נמצאו קישורים תקינים");
+  const created = await insertItems(teacherId, unfurled);
+  return attachItems(
+    lessonId,
+    created.map((c) => c.id),
+    index,
+  );
+}
+
+export async function addExistingItem(lessonId: number, teacherId: number, itemId: number, index?: number) {
+  const db = await getDb();
+  await ownedLesson(lessonId, teacherId);
+  const [item] = await db.select({ id: items.id, teacherId: items.teacherId }).from(items).where(eq(items.id, itemId)).limit(1);
+  if (!item || item.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
+  return attachItems(lessonId, [itemId], index);
+}
+
+// הדבקה למחסן: יוצר פריטים בלי לתלות אותם בשיעור.
+export async function createLooseItems(teacherId: number, urls: string[]) {
+  const unfurled = await unfurlMany(urls);
+  if (unfurled.length === 0) throw new HttpError(400, "לא נמצאו קישורים תקינים");
+  return insertItems(teacherId, unfurled);
+}
+
+export async function listTeacherItems(teacherId: number) {
+  const db = await getDb();
+  const rows = await db
+    .select({ item: items, placed: sql<number>`count(${lessonItems.id})::int` })
+    .from(items)
+    .leftJoin(lessonItems, eq(lessonItems.itemId, items.id))
+    .where(eq(items.teacherId, teacherId))
+    .groupBy(items.id)
+    .orderBy(desc(items.createdAt))
+    .limit(60);
+  return rows.map((r) => ({ ...r.item, placed: r.placed }));
+}
+
+export async function groupContext(groupId: number, teacherId: number) {
+  const group = await ownedGroup(groupId, teacherId);
+  return { className: group.className, subjectName: group.subjectName };
 }
 
 export async function addCrossLinks(groupId: number, teacherId: number, urls: string[]) {
@@ -221,11 +277,12 @@ export async function addCrossLinks(groupId: number, teacherId: number, urls: st
 export async function updateLessonItem(
   id: number,
   teacherId: number,
-  patch: { note?: string; phase?: string | null; level?: string | null; isAssignment?: boolean },
+  patch: { note?: string; phase?: string | null; level?: string | null; isAssignment?: boolean; minutes?: number | null },
 ) {
   const db = await getDb();
   await ownedLessonItem(id, teacherId);
   const set: Partial<typeof lessonItems.$inferInsert> = {};
+  if (patch.minutes !== undefined) set.minutes = patch.minutes;
   if (patch.note !== undefined) set.note = patch.note.slice(0, 2000);
   if (patch.phase !== undefined) set.phase = patch.phase;
   if (patch.level !== undefined) set.level = patch.level;
