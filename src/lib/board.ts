@@ -277,12 +277,12 @@ export async function addCrossLinks(groupId: number, teacherId: number, urls: st
 export async function updateLessonItem(
   id: number,
   teacherId: number,
-  patch: { note?: string; phase?: string | null; level?: string | null; isAssignment?: boolean; minutes?: number | null },
+  patch: { note?: string; phase?: string | null; level?: string | null; isAssignment?: boolean; duration?: string | null },
 ) {
   const db = await getDb();
   await ownedLessonItem(id, teacherId);
   const set: Partial<typeof lessonItems.$inferInsert> = {};
-  if (patch.minutes !== undefined) set.minutes = patch.minutes;
+  if (patch.duration !== undefined) set.duration = patch.duration;
   if (patch.note !== undefined) set.note = patch.note.slice(0, 2000);
   if (patch.phase !== undefined) set.phase = patch.phase;
   if (patch.level !== undefined) set.level = patch.level;

@@ -1,0 +1,1 @@
+ALTER TABLE "lesson_items" ADD COLUMN "duration" text;

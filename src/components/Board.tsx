@@ -55,7 +55,7 @@ type LessonItem = {
   phase: string | null;
   note: string;
   isAssignment: boolean;
-  minutes: number | null;
+  duration: string | null;
   item: Item;
 };
 type Lesson = { id: number; title: string; items: LessonItem[] };
@@ -65,7 +65,7 @@ type BoardData = {
   lessons: Lesson[];
   crossItems: CrossItem[];
 };
-type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "minutes">>;
+type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "duration">>;
 
 // מה שנגרר מהמחסן: קישור מחומר פתוח (ייווצר פריט) או פריט קיים של המורה.
 type WhCard =
@@ -79,7 +79,65 @@ const PHASES = [
   { name: "רקע", icon: Library },
   { name: "העשרה", icon: Sparkles },
 ] as const;
-const MINUTE_CHOICES = [5, 10, 15, 20, 30, 45];
+// אותה סקאלה ואותם אייקונים כמו "כמה זמן" בטופס ההעלאה של חומר פתוח.
+const DURATIONS = [
+  { key: "quarter", label: "רבע שעה", minutes: 15 },
+  { key: "half", label: "חצי שעה", minutes: 30 },
+  { key: "lesson", label: "שיעור", minutes: 45 },
+  { key: "double", label: "שני שיעורים", minutes: 90 },
+  { key: "unit", label: "יחידה ארוכה", minutes: 0 },
+] as const;
+
+const WEDGES: Record<string, string> = {
+  quarter: "M12 12 L12 5.8 A6.2 6.2 0 0 1 18.2 12 Z",
+  half: "M12 12 L12 5.8 A6.2 6.2 0 0 1 12 18.2 Z",
+  lesson: "M12 12 L12 5.8 A6.2 6.2 0 1 1 5.8 12 Z",
+};
+
+function DurationIcon({ kind, size = 16 }: { kind: string; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+  if (WEDGES[kind]) {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path fill="currentColor" stroke="none" d={WEDGES[kind]} />
+      </svg>
+    );
+  }
+  if (kind === "double") {
+    return (
+      <svg {...common}>
+        <path d="M5 22h14" />
+        <path d="M5 2h14" />
+        <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
+        <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <rect x="3" y="4" width="18" height="17" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <path d="M8 14h.01" />
+      <path d="M12 14h.01" />
+      <path d="M16 14h.01" />
+      <path d="M8 18h.01" />
+      <path d="M12 18h.01" />
+    </svg>
+  );
+}
 
 const KIND_ICON: Record<string, typeof Link2> = {
   openstuff: BookOpen,
@@ -157,6 +215,7 @@ function ItemRow({
   const KindIcon = KIND_ICON[li.item.kind] ?? Link2;
   const phase = PHASES.find((p) => p.name === li.phase);
   const PhaseIcon = phase?.icon;
+  const duration = DURATIONS.find((d) => d.key === li.duration);
   const stop = (e: React.PointerEvent) => e.stopPropagation();
 
   return (
@@ -177,9 +236,9 @@ function ItemRow({
           {li.item.title}
         </a>
         <div className="flex items-center gap-1.5 text-muted shrink-0 pe-1">
-          {li.minutes != null && (
-            <span className="text-xs font-medium tabular-nums" data-tip="משך מתוכנן">
-              {li.minutes}׳
+          {duration && (
+            <span className="text-orange" data-tip={duration.label}>
+              <DurationIcon kind={duration.key} size={15} />
             </span>
           )}
           {li.isAssignment && (
@@ -232,18 +291,18 @@ function ItemRow({
           </div>
 
           <div className="flex flex-wrap items-center gap-1">
-            <span className="text-muted" data-tip="משך מתוכנן בדקות">
+            <span className="text-muted me-1" data-tip="כמה זמן">
               <Clock size={14} strokeWidth={2} />
             </span>
-            {MINUTE_CHOICES.map((m) => (
+            {DURATIONS.map((d) => (
               <button
-                key={m}
-                onClick={() => onChange({ minutes: li.minutes === m ? null : m })}
-                className={`rounded-full px-2 py-0.5 text-xs border transition ${
-                  li.minutes === m ? "bg-blue text-white border-blue" : "border-line text-muted hover:border-blue"
-                }`}
+                key={d.key}
+                className={`btn-icon !p-1.5 ${li.duration === d.key ? "!bg-orange/10 !text-orange" : ""}`}
+                data-tip={d.label}
+                aria-label={d.label}
+                onClick={() => onChange({ duration: li.duration === d.key ? null : d.key })}
               >
-                {m}
+                <DurationIcon kind={d.key} size={16} />
               </button>
             ))}
           </div>
@@ -316,6 +375,7 @@ function LessonColumn({
   onLeave,
   onAddUrls,
   onRename,
+  onTitleDraft,
   onItemChange,
   onItemDelete,
 }: {
@@ -329,12 +389,14 @@ function LessonColumn({
   onLeave: () => void;
   onAddUrls: (urls: string[]) => void;
   onRename: (title: string) => void;
+  onTitleDraft: (title: string) => void;
   onItemChange: (id: number, patch: ItemPatch) => void;
   onItemDelete: (id: number) => void;
 }) {
   const { setNodeRef } = useDroppable({ id: `lesson-${lesson.id}` });
   const [title, setTitle] = useState(lesson.title);
-  const total = lesson.items.reduce((sum, li) => sum + (li.minutes ?? 0), 0);
+  // הערכה גסה לפי הסקאלה; "יחידה ארוכה" לא נספרת כי היא לא שייכת לשיעור אחד.
+  const total = lesson.items.reduce((sum, li) => sum + (DURATIONS.find((d) => d.key === li.duration)?.minutes ?? 0), 0);
 
   return (
     <section
@@ -362,14 +424,17 @@ function LessonColumn({
         <span className="h-7 w-7 shrink-0 rounded-full bg-blue text-white text-sm font-bold flex items-center justify-center">{index + 1}</span>
         <input
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            onTitleDraft(e.target.value);
+          }}
           onBlur={() => title.trim() && title !== lesson.title && onRename(title)}
           className="min-w-0 flex-1 bg-transparent font-bold text-lg outline-none"
           aria-label="שם השיעור"
         />
         {total > 0 && (
-          <span className="shrink-0 rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-1 tabular-nums" data-tip="סך הזמן המתוכנן">
-            {total} דק׳
+          <span className="shrink-0 rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-1 tabular-nums" data-tip="הערכה לפי משך הפריטים">
+            כ־{total} דק׳
           </span>
         )}
       </div>
@@ -430,17 +495,25 @@ function Warehouse({
   groupId,
   usedUrls,
   refreshKey,
+  autoQuery,
+  autoKey,
   onClose,
   onItemsChanged,
 }: {
   groupId: number;
   usedUrls: Set<string>;
   refreshKey: number;
+  autoQuery: string;
+  autoKey: number | null;
   onClose: () => void;
   onItemsChanged: () => void;
 }) {
   const [tab, setTab] = useState<"os" | "mine">("os");
-  const [q, setQ] = useState("");
+  const [manualQ, setManualQ] = useState("");
+  // שם השיעור הפעיל משמש כחיפוש, עד שהמורה מקלידה בעצמה או מסירה אותו. מתאפס במעבר לשיעור אחר.
+  const [autoOff, setAutoOff] = useState<number | null>(null);
+  const autoActive = autoQuery !== "" && autoOff !== autoKey && manualQ.trim() === "";
+  const q = manualQ.trim() || (autoActive ? autoQuery : "");
   const [all, setAll] = useState(false);
   const [page, setPage] = useState(1);
   const [osCards, setOsCards] = useState<WhCard[]>([]);
@@ -449,6 +522,11 @@ function Warehouse({
   const [osError, setOsError] = useState("");
   const [mine, setMine] = useState<WhCard[]>([]);
   const [pasteBusy, setPasteBusy] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(1);
+  }, [q, all]);
 
   useEffect(() => {
     if (tab !== "os") return;
@@ -542,12 +620,22 @@ function Warehouse({
           <input
             className="field !py-1.5 text-sm"
             placeholder="חיפוש בחומר פתוח"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
+            value={manualQ}
+            onChange={(e) => setManualQ(e.target.value)}
           />
+          {autoActive && (
+            <div className="flex items-center gap-1.5 rounded-full bg-blue-soft text-blue-dark text-xs ps-3 pe-1 py-1">
+              <span className="truncate">לפי שם השיעור: {autoQuery}</span>
+              <button
+                className="btn-icon !p-1 ms-auto shrink-0"
+                data-tip="חיפוש רחב יותר"
+                aria-label="הסרת הסינון לפי שם השיעור"
+                onClick={() => setAutoOff(autoKey)}
+              >
+                <X size={14} strokeWidth={2} />
+              </button>
+            </div>
+          )}
           <div className="flex gap-1 text-xs">
             {(
               [
@@ -557,10 +645,7 @@ function Warehouse({
             ).map(([val, label]) => (
               <button
                 key={label}
-                onClick={() => {
-                  setAll(val);
-                  setPage(1);
-                }}
+                onClick={() => setAll(val)}
                 className={`rounded-full border px-3 py-1 transition ${all === val ? "bg-blue-soft border-blue text-blue-dark" : "border-line text-muted"}`}
               >
                 {label}
@@ -584,7 +669,22 @@ function Warehouse({
             ))}
             {osError && <p className="text-coral text-sm">{osError}</p>}
             {osLoading && <p className="text-muted text-sm text-center py-2">טוענים…</p>}
-            {!osLoading && !osError && osCards.length === 0 && <p className="text-muted text-sm text-center py-6">לא נמצאו פריטים</p>}
+            {!osLoading && !osError && osCards.length === 0 && (
+              <div className="text-center py-6 flex flex-col items-center gap-2">
+                <p className="text-muted text-sm">לא נמצאו פריטים</p>
+                {!all ? (
+                  <button className="btn btn-ghost !py-1 text-xs" onClick={() => setAll(true)}>
+                    חיפוש בכל המאגר
+                  </button>
+                ) : (
+                  autoActive && (
+                    <button className="btn btn-ghost !py-1 text-xs" onClick={() => setAutoOff(autoKey)}>
+                      הסרת הסינון לפי שם השיעור
+                    </button>
+                  )
+                )}
+              </div>
+            )}
             {!osLoading && osCards.length < osTotal && (
               <button className="btn btn-ghost justify-center" onClick={() => setPage((p) => p + 1)}>
                 עוד
@@ -616,6 +716,7 @@ export default function Board({ groupId }: { groupId: number }) {
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
   const [overLesson, setOverLesson] = useState<number | null>(null);
+  const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
   const activeRef = useRef<number | null>(null);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -810,7 +911,14 @@ export default function Board({ groupId }: { groupId: number }) {
   if (!data) return <div className="p-10 text-muted">{error || "טוענים…"}</div>;
 
   const { group } = data;
-  const usedUrls = new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
+  const activeTitle = (
+    activeLesson != null && titleDrafts[activeLesson] !== undefined
+      ? titleDrafts[activeLesson]
+      : (data.lessons.find((l) => l.id === activeLesson)?.title ?? "")
+  ).trim();
+  // שם ברירת מחדל ("שיעור 3") לא מחפש כלום; שם אמיתי הופך לחיפוש במחסן.
+  const autoQuery = /^שיעור\s*\d*$/.test(activeTitle) ? "" : activeTitle;
+  const usedUrls =new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
 
   return (
     <div className="px-5 py-8">
@@ -872,6 +980,7 @@ export default function Board({ groupId }: { groupId: number }) {
                     onLeave={() => enterTimer.current && clearTimeout(enterTimer.current)}
                     onAddUrls={(urls) => addUrls(l.id, urls)}
                     onRename={(title) => api(`/api/lessons/${l.id}`, "PATCH", { title }).then(load)}
+                    onTitleDraft={(t) => setTitleDrafts((p) => ({ ...p, [l.id]: t }))}
                     onItemChange={itemChange}
                     onItemDelete={itemDelete}
                   />
@@ -908,6 +1017,8 @@ export default function Board({ groupId }: { groupId: number }) {
               groupId={groupId}
               usedUrls={usedUrls}
               refreshKey={warehouseKey}
+              autoQuery={autoQuery}
+              autoKey={activeLesson}
               onClose={() => setWarehouseOpen(false)}
               onItemsChanged={bumpWarehouse}
             />
