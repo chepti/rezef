@@ -122,3 +122,25 @@ textarea {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px var(--blue-soft);
 }
+
+/* טולטיפים שקופים בקצה המסך הגדילו את אזור הגלילה של הדף; חותכים את הגלישה בלי ליצור אלמנט גלילה. */
+body {
+  overflow-x: clip;
+}
+/* לכפתור שיושב בקצה השמאלי: הטולטיפ נפתח ימינה מהקצה, כדי שלא ייחתך. */
+[data-tip-edge="left"]::after {
+  left: 0;
+  transform: translate(0, 4px);
+}
+[data-tip-edge="left"]:hover::after,
+[data-tip-edge="left"]:focus-visible::after {
+  transform: translate(0, 0);
+}
+
+/* גלילה בלי פס מכוער: הניווט נעשה בחיצים ובגרירת החבל. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

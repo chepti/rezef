@@ -1,9 +1,12 @@
-import { asc, desc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, max, ne, sql } from "drizzle-orm";
 import { getDb, tables } from "@/db";
 import { HttpError } from "./session";
 import { unfurl } from "./unfurl";
 
-const { groups, sequences, lessons, items, lessonItems, crossItems } = tables;
+const { groups, sequences, topics, lessons, items, lessonItems, crossItems } = tables;
+
+// צבעי הנושאים בסרגל: נבחרים לפי סדר היצירה ומסתובבים.
+const TOPIC_COLORS = ["#6685f0", "#fb8255", "#34b3a0", "#9b7ede", "#e5a825", "#fb6965", "#4aa66a", "#d9649a"];
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -54,8 +57,112 @@ export async function createGroup(
     .returning();
 
   const [sequence] = await db.insert(sequences).values({ groupId: group.id, title: name }).returning();
-  await db.insert(lessons).values({ sequenceId: sequence.id, position: 1, title: "שיעור 1" });
+  const [topic] = await db
+    .insert(topics)
+    .values({ sequenceId: sequence.id, position: 1, name: "נושא 1", color: TOPIC_COLORS[0] })
+    .returning();
+  await db.insert(lessons).values({ sequenceId: sequence.id, topicId: topic.id, position: 1, title: "שיעור 1" });
+  await db.update(sequences).set({ currentTopicId: topic.id }).where(eq(sequences.id, sequence.id));
   return group;
+}
+
+// רצפים שנוצרו לפני שהיו נושאים: מוודא שיש לפחות נושא אחד, ששיעורים בלי נושא משויכים אליו,
+// ושהנושא הנוכחי תקין.
+async function ensureTopics(sequenceId: number) {
+  const db = await getDb();
+  let rows = await db.select().from(topics).where(eq(topics.sequenceId, sequenceId)).orderBy(asc(topics.position));
+  if (rows.length === 0) {
+    const [created] = await db
+      .insert(topics)
+      .values({ sequenceId, position: 1, name: "נושא 1", color: TOPIC_COLORS[0] })
+      .returning();
+    rows = [created];
+  }
+  await db
+    .update(lessons)
+    .set({ topicId: rows[0].id })
+    .where(and(eq(lessons.sequenceId, sequenceId), isNull(lessons.topicId)));
+  const [seq] = await db.select().from(sequences).where(eq(sequences.id, sequenceId)).limit(1);
+  if (!seq.currentTopicId || !rows.some((t) => t.id === seq.currentTopicId)) {
+    await db.update(sequences).set({ currentTopicId: rows[0].id }).where(eq(sequences.id, sequenceId));
+  }
+  return rows;
+}
+
+async function sequenceOf(groupId: number) {
+  const db = await getDb();
+  const [sequence] = await db.select().from(sequences).where(eq(sequences.groupId, groupId)).limit(1);
+  return sequence;
+}
+
+async function topicInSequence(topicId: number, sequenceId: number) {
+  const db = await getDb();
+  const [topic] = await db.select().from(topics).where(eq(topics.id, topicId)).limit(1);
+  if (!topic || topic.sequenceId !== sequenceId) throw new HttpError(404, "הנושא לא נמצא");
+  return topic;
+}
+
+async function ownedTopic(topicId: number, teacherId: number) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ topic: topics, group: groups })
+    .from(topics)
+    .innerJoin(sequences, eq(sequences.id, topics.sequenceId))
+    .innerJoin(groups, eq(groups.id, sequences.groupId))
+    .where(eq(topics.id, topicId))
+    .limit(1);
+  if (!row || row.group.teacherId !== teacherId) throw new HttpError(404, "הנושא לא נמצא");
+  return row;
+}
+
+export async function createTopic(groupId: number, teacherId: number, name?: string) {
+  const db = await getDb();
+  const group = await ownedGroup(groupId, teacherId);
+  const sequence = await sequenceOf(group.id);
+  const existing = await db.select({ id: topics.id }).from(topics).where(eq(topics.sequenceId, sequence.id));
+  const [{ top }] = await db.select({ top: max(topics.position) }).from(topics).where(eq(topics.sequenceId, sequence.id));
+  const next = (top ?? 0) + 1;
+  const [topic] = await db
+    .insert(topics)
+    .values({
+      sequenceId: sequence.id,
+      position: next,
+      name: name?.trim() || `נושא ${next}`,
+      color: TOPIC_COLORS[existing.length % TOPIC_COLORS.length],
+    })
+    .returning();
+  // נושא חדש נפתח מיד, עם שיעור ראשון, כדי שיהיה במה להתחיל.
+  await db.insert(lessons).values({ sequenceId: sequence.id, topicId: topic.id, position: 1, title: "שיעור 1" });
+  await db.update(sequences).set({ currentTopicId: topic.id }).where(eq(sequences.id, sequence.id));
+  return topic;
+}
+
+export async function renameTopic(topicId: number, teacherId: number, name: string) {
+  const db = await getDb();
+  await ownedTopic(topicId, teacherId);
+  const clean = name.trim();
+  if (!clean) throw new HttpError(400, "חסר שם נושא");
+  await db.update(topics).set({ name: clean }).where(eq(topics.id, topicId));
+}
+
+export async function deleteTopic(topicId: number, teacherId: number) {
+  const db = await getDb();
+  const { topic } = await ownedTopic(topicId, teacherId);
+  const siblings = await db.select().from(topics).where(eq(topics.sequenceId, topic.sequenceId)).orderBy(asc(topics.position));
+  if (siblings.length <= 1) throw new HttpError(400, "אי אפשר למחוק את הנושא היחיד");
+  const inside = await db.select({ id: lessons.id }).from(lessons).where(eq(lessons.topicId, topicId)).limit(1);
+  if (inside.length > 0) throw new HttpError(400, "אפשר למחוק רק נושא ריק");
+  const other = siblings.find((t) => t.id !== topicId)!;
+  await db.update(sequences).set({ currentTopicId: other.id }).where(and(eq(sequences.id, topic.sequenceId), eq(sequences.currentTopicId, topicId)));
+  await db.delete(topics).where(eq(topics.id, topicId));
+}
+
+export async function setCurrentTopic(groupId: number, teacherId: number, topicId: number) {
+  const db = await getDb();
+  const group = await ownedGroup(groupId, teacherId);
+  const sequence = await sequenceOf(group.id);
+  await topicInSequence(topicId, sequence.id);
+  await db.update(sequences).set({ currentTopicId: topicId }).where(eq(sequences.id, sequence.id));
 }
 
 async function ownedGroup(groupId: number, teacherId: number) {
@@ -95,12 +202,14 @@ async function ownedLessonItem(id: number, teacherId: number) {
 export async function getBoard(groupId: number, teacherId: number) {
   const db = await getDb();
   const group = await ownedGroup(groupId, teacherId);
-  const [sequence] = await db.select().from(sequences).where(eq(sequences.groupId, group.id)).limit(1);
+  const first = await sequenceOf(group.id);
+  const topicRows = await ensureTopics(first.id);
+  const sequence = await sequenceOf(group.id);
   const lessonRows = await db
     .select()
     .from(lessons)
     .where(eq(lessons.sequenceId, sequence.id))
-    .orderBy(asc(lessons.position));
+    .orderBy(asc(lessons.position), asc(lessons.id));
 
   const lessonIds = lessonRows.map((l) => l.id);
   const itemRows = lessonIds.length
@@ -122,6 +231,7 @@ export async function getBoard(groupId: number, teacherId: number) {
   return {
     group,
     sequence,
+    topics: topicRows,
     lessons: lessonRows.map((l) => ({
       ...l,
       items: itemRows.filter((r) => r.li.lessonId === l.id).map((r) => ({ ...r.li, item: r.item })),
@@ -130,28 +240,68 @@ export async function getBoard(groupId: number, teacherId: number) {
   };
 }
 
-export async function addLesson(lessonSequenceGroupId: number, teacherId: number, title?: string) {
+export async function addLesson(groupId: number, teacherId: number, input: { title?: string; topicId?: number }) {
   const db = await getDb();
-  const group = await ownedGroup(lessonSequenceGroupId, teacherId);
-  const [sequence] = await db.select().from(sequences).where(eq(sequences.groupId, group.id)).limit(1);
+  const group = await ownedGroup(groupId, teacherId);
+  const sequence = await sequenceOf(group.id);
+  const topicId = input.topicId ?? sequence.currentTopicId;
+  if (!topicId) throw new HttpError(400, "אין נושא פתוח");
+  await topicInSequence(topicId, sequence.id);
   const [{ top }] = await db
     .select({ top: max(lessons.position) })
     .from(lessons)
     .where(eq(lessons.sequenceId, sequence.id));
-  const next = (top ?? 0) + 1;
+  const inTopic = await db.select({ id: lessons.id }).from(lessons).where(eq(lessons.topicId, topicId));
   const [lesson] = await db
     .insert(lessons)
-    .values({ sequenceId: sequence.id, position: next, title: title?.trim() || `שיעור ${next}` })
+    .values({
+      sequenceId: sequence.id,
+      topicId,
+      position: (top ?? 0) + 1,
+      title: input.title?.trim() || `שיעור ${inTopic.length + 1}`,
+    })
     .returning();
   return lesson;
 }
 
-export async function renameLesson(lessonId: number, teacherId: number, title: string) {
+// שם, נושא ומקום של שיעור. הגרירה משנה את הסדר בתוך הנושא בלבד, ומשתמשת מחדש במיקומים הקיימים
+// של אותם שיעורים, כדי שלא להזיז שיעורים של נושאים אחרים.
+export async function updateLesson(
+  lessonId: number,
+  teacherId: number,
+  patch: { title?: string; topicId?: number; index?: number },
+) {
   const db = await getDb();
-  await ownedLesson(lessonId, teacherId);
-  const clean = title.trim();
-  if (!clean) throw new HttpError(400, "חסרה כותרת");
-  await db.update(lessons).set({ title: clean }).where(eq(lessons.id, lessonId));
+  const { lesson } = await ownedLesson(lessonId, teacherId);
+
+  if (patch.title !== undefined) {
+    const clean = patch.title.trim();
+    if (!clean) throw new HttpError(400, "חסרה כותרת");
+    await db.update(lessons).set({ title: clean }).where(eq(lessons.id, lessonId));
+  }
+
+  if (patch.topicId !== undefined || patch.index !== undefined) {
+    const targetTopicId = patch.topicId ?? lesson.topicId;
+    if (!targetTopicId) throw new HttpError(400, "חסר נושא");
+    await topicInSequence(targetTopicId, lesson.sequenceId);
+
+    const siblings = await db
+      .select({ id: lessons.id, position: lessons.position })
+      .from(lessons)
+      .where(and(eq(lessons.topicId, targetTopicId), ne(lessons.id, lessonId)))
+      .orderBy(asc(lessons.position), asc(lessons.id));
+    const pool = [...siblings.map((s) => s.position), lesson.position].sort((a, b) => a - b);
+    const ordered = siblings.map((s) => s.id);
+    const at = patch.index === undefined ? ordered.length : Math.max(0, Math.min(patch.index, ordered.length));
+    ordered.splice(at, 0, lessonId);
+
+    await db.transaction(async (tx) => {
+      await tx.update(lessons).set({ topicId: targetTopicId }).where(eq(lessons.id, lessonId));
+      for (let i = 0; i < ordered.length; i++) {
+        await tx.update(lessons).set({ position: pool[i] }).where(eq(lessons.id, ordered[i]));
+      }
+    });
+  }
 }
 
 const MAX_LINKS_PER_PASTE = 30;
@@ -261,17 +411,70 @@ export async function groupContext(groupId: number, teacherId: number) {
   return { className: group.className, subjectName: group.subjectName };
 }
 
-export async function addCrossLinks(groupId: number, teacherId: number, urls: string[]) {
+// topicId: מספר = משויך לנושא; null = חל על כל הנושאים; undefined = הנושא הפתוח כעת.
+async function resolveCrossTopic(sequence: { id: number; currentTopicId: number | null }, topicId: number | null | undefined) {
+  if (topicId === null) return null;
+  const id = topicId ?? sequence.currentTopicId;
+  if (!id) return null;
+  await topicInSequence(id, sequence.id);
+  return id;
+}
+
+export async function addCrossLinks(groupId: number, teacherId: number, urls: string[], topicId?: number | null) {
   const db = await getDb();
   const group = await ownedGroup(groupId, teacherId);
-  const [sequence] = await db.select().from(sequences).where(eq(sequences.groupId, group.id)).limit(1);
+  const sequence = await sequenceOf(group.id);
+  const topic = await resolveCrossTopic(sequence, topicId);
   const unfurled = await unfurlMany(urls);
   if (unfurled.length === 0) throw new HttpError(400, "לא נמצאו קישורים תקינים");
   const created = await insertItems(teacherId, unfurled);
   return db
     .insert(crossItems)
-    .values(created.map((it) => ({ sequenceId: sequence.id, itemId: it.id })))
+    .values(created.map((it) => ({ sequenceId: sequence.id, itemId: it.id, topicId: topic })))
     .returning();
+}
+
+export async function addCrossFromItem(groupId: number, teacherId: number, itemId: number, topicId?: number | null) {
+  const db = await getDb();
+  const group = await ownedGroup(groupId, teacherId);
+  const sequence = await sequenceOf(group.id);
+  const [item] = await db.select({ id: items.id, teacherId: items.teacherId }).from(items).where(eq(items.id, itemId)).limit(1);
+  if (!item || item.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
+  const topic = await resolveCrossTopic(sequence, topicId);
+  const [row] = await db.insert(crossItems).values({ sequenceId: sequence.id, itemId, topicId: topic }).returning();
+  return row;
+}
+
+// גרירת פריט משיעור אל הפריטים הרוחביים: מעביר (לא משכפל) את הפריט.
+export async function lessonItemToCross(lessonItemId: number, teacherId: number, topicId?: number | null) {
+  const db = await getDb();
+  const { li, group } = await ownedLessonItem(lessonItemId, teacherId);
+  const sequence = await sequenceOf(group.id);
+  const topic = await resolveCrossTopic(sequence, topicId);
+  return db.transaction(async (tx) => {
+    const [row] = await tx.insert(crossItems).values({ sequenceId: sequence.id, itemId: li.itemId, note: li.note, topicId: topic }).returning();
+    await tx.delete(lessonItems).where(eq(lessonItems.id, lessonItemId));
+    return row;
+  });
+}
+
+export async function updateCross(id: number, teacherId: number, patch: { topicId?: number | null; note?: string }) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ ci: crossItems, group: groups })
+    .from(crossItems)
+    .innerJoin(sequences, eq(sequences.id, crossItems.sequenceId))
+    .innerJoin(groups, eq(groups.id, sequences.groupId))
+    .where(eq(crossItems.id, id))
+    .limit(1);
+  if (!row || row.group.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
+  const set: Partial<typeof crossItems.$inferInsert> = {};
+  if (patch.topicId !== undefined) {
+    if (patch.topicId !== null) await topicInSequence(patch.topicId, row.ci.sequenceId);
+    set.topicId = patch.topicId;
+  }
+  if (patch.note !== undefined) set.note = patch.note.slice(0, 2000);
+  if (Object.keys(set).length > 0) await db.update(crossItems).set(set).where(eq(crossItems.id, id));
 }
 
 export async function updateLessonItem(

@@ -3,25 +3,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   closestCorners,
+  type CollisionDetection,
   DndContext,
   type DragEndEvent,
   type DragOverEvent,
   DragOverlay,
   type DragStartEvent,
   PointerSensor,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { horizontalListSortingStrategy, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import TopicBar, { type Topic } from "./board-topics";
+import Rope from "./board-rope";
 import {
-  BookOpen,
   Check,
+  ChevronDown,
+  ChevronUp,
   ClipboardCheck,
   Clock,
   Copy,
+  GripVertical,
+  Layers,
   Dumbbell,
   FileText,
   Gamepad2,
@@ -58,10 +65,12 @@ type LessonItem = {
   duration: string | null;
   item: Item;
 };
-type Lesson = { id: number; title: string; items: LessonItem[] };
-type CrossItem = { id: number; note: string; item: Item };
+type Lesson = { id: number; title: string; topicId: number | null; items: LessonItem[] };
+type CrossItem = { id: number; note: string; topicId: number | null; item: Item };
 type BoardData = {
   group: { id: number; name: string; className: string | null; subjectName: string | null; joinCode: string };
+  sequence: { id: number; currentTopicId: number | null };
+  topics: Topic[];
   lessons: Lesson[];
   crossItems: CrossItem[];
 };
@@ -139,8 +148,16 @@ function DurationIcon({ kind, size = 16 }: { kind: string; size?: number }) {
   );
 }
 
-const KIND_ICON: Record<string, typeof Link2> = {
-  openstuff: BookOpen,
+// הסימן של חומר פתוח (הסלסול והנקודה מהלוגו), ולא ספר פתוח שנקרא בהמון דרכים אחרות.
+function OpenstuffMark({ size = 16 }: { size?: number; strokeWidth?: number }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/openstuff-mark.png" alt="" width={size + 4} height={size + 4} draggable={false} className="shrink-0" />
+  );
+}
+
+const KIND_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
+  openstuff: OpenstuffMark,
   youtube: Play,
   video: Play,
   slides: Presentation,
@@ -367,6 +384,7 @@ function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void
 function LessonColumn({
   lesson,
   index,
+  color,
   active,
   dropTarget,
   dragging,
@@ -381,6 +399,7 @@ function LessonColumn({
 }: {
   lesson: Lesson;
   index: number;
+  color: string;
   active: boolean;
   dropTarget: boolean;
   dragging: boolean;
@@ -393,14 +412,20 @@ function LessonColumn({
   onItemChange: (id: number, patch: ItemPatch) => void;
   onItemDelete: (id: number) => void;
 }) {
-  const { setNodeRef } = useDroppable({ id: `lesson-${lesson.id}` });
+  // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
+  const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
+  const { attributes, listeners, setNodeRef: setSortRef, transform, transition, isDragging } = useSortable({ id: `ls-${lesson.id}` });
   const [title, setTitle] = useState(lesson.title);
   // הערכה גסה לפי הסקאלה; "יחידה ארוכה" לא נספרת כי היא לא שייכת לשיעור אחד.
   const total = lesson.items.reduce((sum, li) => sum + (DURATIONS.find((d) => d.key === li.duration)?.minutes ?? 0), 0);
 
   return (
     <section
-      ref={setNodeRef}
+      ref={(node) => {
+        setSortRef(node);
+        setDropRef(node);
+      }}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
       onPointerEnter={onEnter}
       onPointerLeave={onLeave}
       onDragOver={(e) => e.preventDefault()}
@@ -421,7 +446,21 @@ function LessonColumn({
       }`}
     >
       <div className="flex items-center gap-2">
-        <span className="h-7 w-7 shrink-0 rounded-full bg-blue text-white text-sm font-bold flex items-center justify-center">{index + 1}</span>
+        <button
+          className="btn-icon cursor-grab touch-none !p-1 -ms-1"
+          data-tip="גרירה לשינוי סדר השיעורים"
+          aria-label="גרירת שיעור"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={16} strokeWidth={2} />
+        </button>
+        <span
+          className="h-7 w-7 shrink-0 rounded-full text-white text-sm font-bold flex items-center justify-center"
+          style={{ background: color }}
+        >
+          {index + 1}
+        </span>
         <input
           value={title}
           onChange={(e) => {
@@ -706,6 +745,87 @@ function Warehouse({
 
 /* ---------- הלוח ---------- */
 
+/* ---------- פריטים רוחביים ---------- */
+
+function CrossSection({
+  open,
+  onToggle,
+  items,
+  topicColor,
+  dragging,
+  isOver,
+  busy,
+  currentTopicId,
+  onAddUrls,
+  onRemove,
+  onToggleScope,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  items: CrossItem[];
+  topicColor: string;
+  dragging: boolean;
+  isOver: boolean;
+  busy: boolean;
+  currentTopicId: number | null;
+  onAddUrls: (urls: string[]) => void;
+  onRemove: (id: number) => void;
+  onToggleScope: (c: CrossItem) => void;
+}) {
+  const { setNodeRef } = useDroppable({ id: "cross-zone" });
+  return (
+    <section
+      ref={setNodeRef}
+      className={`mt-6 rounded-3xl border p-3.5 transition-all ${
+        isOver ? "border-blue bg-blue-soft ring-4 ring-blue/20" : dragging ? "border-blue/50 border-dashed bg-white/70" : "border-line bg-white/60"
+      }`}
+    >
+      <button className="flex w-full items-center gap-2 text-start" onClick={onToggle} aria-expanded={open}>
+        <h2 className="text-lg font-bold" data-tip="תכנון יחידה, תרגיל חוזר, בוחן קבוע: דברים שלא שייכים לשיעור אחד">
+          פריטים רוחביים
+        </h2>
+        <span className="rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-0.5 tabular-nums">{items.length}</span>
+        {dragging && <span className="text-sm text-blue-dark">שחררו כאן כדי להפוך לפריט רוחבי</span>}
+        <span className="ms-auto text-muted">{open ? <ChevronUp size={18} strokeWidth={2} /> : <ChevronDown size={18} strokeWidth={2} />}</span>
+      </button>
+
+      {open && (
+        <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {items.map((c) => (
+            <div key={c.id} className="bg-white border border-line rounded-xl p-2 flex gap-2.5 items-center">
+              <Thumb item={c.item} size={40} />
+              <a href={c.item.url} target="_blank" rel="noreferrer" draggable={false} className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
+                {c.item.title}
+              </a>
+              <button
+                className="btn-icon"
+                data-tip={c.topicId === null ? "חל על כל הנושאים. לחצו לשיוך לנושא הנוכחי" : "משויך לנושא. לחצו להחלה על כל הנושאים"}
+                aria-label="שיוך לנושא"
+                onClick={() => onToggleScope(c)}
+                disabled={currentTopicId === null}
+              >
+                {c.topicId === null ? (
+                  <Layers size={16} strokeWidth={2} />
+                ) : (
+                  <span className="block h-3.5 w-3.5 rounded-full" style={{ background: topicColor }} />
+                )}
+              </button>
+              <button className="btn-icon" data-tip="הסרה" aria-label="הסרה" onClick={() => onRemove(c.id)}>
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
+          ))}
+          <PasteZone onUrls={onAddUrls} busy={busy} compact />
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------- הלוח ---------- */
+
+type DragKind = "item" | "lesson" | null;
+
 export default function Board({ groupId }: { groupId: number }) {
   const [data, setData] = useState<BoardData | null>(null);
   const [error, setError] = useState("");
@@ -713,19 +833,44 @@ export default function Board({ groupId }: { groupId: number }) {
   const [activeLesson, setActiveLesson] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [warehouseOpen, setWarehouseOpen] = useState(true);
+  const [crossOpen, setCrossOpen] = useState(true);
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
+  const [dragKind, setDragKind] = useState<DragKind>(null);
   const [overLesson, setOverLesson] = useState<number | null>(null);
+  const [overCross, setOverCross] = useState(false);
   const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
   const activeRef = useRef<number | null>(null);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  // גרירת שיעור רואה רק שיעורים ונושאים; גרירת פריט רואה רק שיעורים (כיעד), פריטים ואזור הרוחביים.
+  // אזורים גדולים (הרוחביים, פסי הנושאים) נקבעים לפי מיקום העכבר ולא לפי קרבת פינות, אחרת הם אף פעם לא "מנצחים".
+  const collision: CollisionDetection = useCallback((args) => {
+    const activeId = String(args.active.id);
+    const isLesson = activeId.startsWith("ls-");
+    const eligible = args.droppableContainers.filter((c) => {
+      const id = String(c.id);
+      return isLesson ? id.startsWith("ls-") || id.startsWith("topic-") : !id.startsWith("ls-") && !id.startsWith("topic-");
+    });
+    const isZone = (id: string) => id === "cross-zone" || id.startsWith("topic-");
+    const zone = pointerWithin({ ...args, droppableContainers: eligible }).find((c) => isZone(String(c.id)));
+    if (zone) return [zone];
+    return closestCorners({ ...args, droppableContainers: eligible.filter((c) => !isZone(String(c.id))) });
+  }, []);
+
+  const firstLessonOf = (board: BoardData, topicId: number | null) =>
+    board.lessons.find((l) => l.topicId === topicId)?.id ?? null;
 
   const load = useCallback(async () => {
     try {
       const board = (await api(`/api/groups/${groupId}/board`, "GET")) as BoardData;
       setData(board);
-      setActiveLesson((cur) => cur ?? board.lessons[0]?.id ?? null);
+      const topicId = board.sequence.currentTopicId;
+      setActiveLesson((cur) =>
+        cur != null && board.lessons.some((l) => l.id === cur && l.topicId === topicId) ? cur : firstLessonOf(board, topicId),
+      );
     } catch (e) {
       if (e instanceof Error && e.message === "נדרשת התחברות") {
         window.location.href = "/";
@@ -778,6 +923,9 @@ export default function Board({ groupId }: { groupId: number }) {
     return () => window.removeEventListener("paste", onPaste);
   }, [addUrls]);
 
+  const currentTopicId = data?.sequence.currentTopicId ?? null;
+  const visibleLessons = data ? data.lessons.filter((l) => l.topicId === currentTopicId) : [];
+
   function locate(overId: string): { lessonId: number; index: number } | null {
     if (!data) return null;
     if (overId.startsWith("lesson-")) {
@@ -797,24 +945,81 @@ export default function Board({ groupId }: { groupId: number }) {
     const id = String(e.active.id);
     if (id.startsWith("wh-")) {
       const card = (e.active.data.current as { card: WhCard }).card;
+      setDragKind("item");
       setDragCard({ title: card.title, imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link" });
     } else if (id.startsWith("li-") && data) {
       const li = data.lessons.flatMap((l) => l.items).find((x) => x.id === Number(id.slice(3)));
+      setDragKind("item");
       if (li) setDragCard({ title: li.item.title, imageUrl: li.item.imageUrl, kind: li.item.kind });
+    } else if (id.startsWith("ls-") && data) {
+      const lesson = data.lessons.find((l) => l.id === Number(id.slice(3)));
+      setDragKind("lesson");
+      if (lesson) setDragCard({ title: lesson.title, imageUrl: null, kind: "lesson" });
     }
   }
 
   function onDragOver(e: DragOverEvent) {
-    setOverLesson(e.over ? (locate(String(e.over.id))?.lessonId ?? null) : null);
+    const id = e.over ? String(e.over.id) : "";
+    setOverCross(id === "cross-zone");
+    setOverLesson(id ? (locate(id)?.lessonId ?? null) : null);
+  }
+
+  function resetDrag() {
+    setDragCard(null);
+    setDragKind(null);
+    setOverLesson(null);
+    setOverCross(false);
   }
 
   async function onDragEnd(e: DragEndEvent) {
-    setDragCard(null);
-    setOverLesson(null);
+    resetDrag();
     if (!data || !e.over) return;
     const activeId = String(e.active.id);
     const overId = String(e.over.id);
     if (activeId === overId) return;
+
+    // סדר שיעורים, או העברת שיעור לנושא אחר.
+    if (activeId.startsWith("ls-")) {
+      const lessonId = Number(activeId.slice(3));
+      try {
+        if (overId.startsWith("topic-")) {
+          await api(`/api/lessons/${lessonId}`, "PATCH", { topicId: Number(overId.slice(6)) });
+        } else if (overId.startsWith("ls-")) {
+          const index = visibleLessons.findIndex((l) => l.id === Number(overId.slice(3)));
+          if (index >= 0) await api(`/api/lessons/${lessonId}`, "PATCH", { index });
+        }
+      } catch {
+        setError("הזזת השיעור נכשלה");
+      }
+      await load();
+      return;
+    }
+
+    // שחרור על הפריטים הרוחביים: הופך את הפריט לרוחבי (פריט משיעור עובר, מהמחסן מתווסף).
+    if (overId === "cross-zone") {
+      setBusy(true);
+      try {
+        if (activeId.startsWith("li-")) {
+          await api(`/api/lesson-items/${Number(activeId.slice(3))}/to-cross`, "POST", { topicId: currentTopicId });
+        } else if (activeId.startsWith("wh-")) {
+          const card = (e.active.data.current as { card: WhCard }).card;
+          await api(
+            `/api/groups/${groupId}/cross`,
+            "POST",
+            card.kind === "os" ? { urls: [card.url], topicId: currentTopicId } : { itemId: card.itemId, topicId: currentTopicId },
+          );
+        }
+        setCrossOpen(true);
+        await load();
+        bumpWarehouse();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "ההעברה נכשלה");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const dest = locate(overId);
     if (!dest) return;
 
@@ -880,15 +1085,57 @@ export default function Board({ groupId }: { groupId: number }) {
     }
   }
 
+  function scrollToEnd() {
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTo({ left: -(el.scrollWidth - el.clientWidth), behavior: "smooth" });
+    });
+  }
+
   async function addLesson() {
-    await api(`/api/groups/${groupId}/lessons`, "POST", {});
+    await api(`/api/groups/${groupId}/lessons`, "POST", { topicId: currentTopicId ?? undefined });
+    await load();
+    scrollToEnd();
+  }
+
+  // החלפת נושא: זוכרים אותו בשרת, כדי שבפעם הבאה הלוח ייפתח בו.
+  function selectTopic(id: number) {
+    if (!data || id === currentTopicId) return;
+    setData({ ...data, sequence: { ...data.sequence, currentTopicId: id } });
+    setActiveLesson(firstLessonOf(data, id));
+    scrollRef.current?.scrollTo({ left: 0 });
+    api(`/api/groups/${groupId}/current-topic`, "POST", { topicId: id }).catch(() => setError("שמירת הנושא נכשלה"));
+  }
+
+  async function addTopic() {
+    try {
+      await api(`/api/groups/${groupId}/topics`, "POST", {});
+      setActiveLesson(null);
+      await load();
+      scrollRef.current?.scrollTo({ left: 0 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "שגיאה");
+    }
+  }
+
+  async function renameTopic(id: number, name: string) {
+    await api(`/api/topics/${id}`, "PATCH", { name }).catch(() => setError("שינוי השם נכשל"));
+    await load();
+  }
+
+  async function deleteTopic(id: number) {
+    try {
+      await api(`/api/topics/${id}`, "DELETE");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "שגיאה");
+    }
     await load();
   }
 
   async function addCross(urls: string[]) {
     setBusy(true);
     try {
-      await api(`/api/groups/${groupId}/cross`, "POST", { urls });
+      await api(`/api/groups/${groupId}/cross`, "POST", { urls, topicId: currentTopicId });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "שגיאה");
@@ -902,6 +1149,11 @@ export default function Board({ groupId }: { groupId: number }) {
     await load();
   }
 
+  async function toggleCrossScope(c: CrossItem) {
+    await api(`/api/cross/${c.id}`, "PATCH", { topicId: c.topicId === null ? currentTopicId : null }).catch(() => setError("השמירה נכשלה"));
+    await load();
+  }
+
   function hoverLesson(id: number) {
     if (enterTimer.current) clearTimeout(enterTimer.current);
     // השהיה קצרה: מעבר עכבר חולף בין שיעורים לא יגרום לקפיצות פריסה.
@@ -911,6 +1163,11 @@ export default function Board({ groupId }: { groupId: number }) {
   if (!data) return <div className="p-10 text-muted">{error || "טוענים…"}</div>;
 
   const { group } = data;
+  const topicColor = data.topics.find((t) => t.id === currentTopicId)?.color ?? "var(--blue)";
+  const lessonCounts: Record<number, number> = {};
+  for (const l of data.lessons) if (l.topicId != null) lessonCounts[l.topicId] = (lessonCounts[l.topicId] ?? 0) + 1;
+  const visibleCross = data.crossItems.filter((c) => c.topicId === null || c.topicId === currentTopicId);
+
   const activeTitle = (
     activeLesson != null && titleDrafts[activeLesson] !== undefined
       ? titleDrafts[activeLesson]
@@ -918,11 +1175,11 @@ export default function Board({ groupId }: { groupId: number }) {
   ).trim();
   // שם ברירת מחדל ("שיעור 3") לא מחפש כלום; שם אמיתי הופך לחיפוש במחסן.
   const autoQuery = /^שיעור\s*\d*$/.test(activeTitle) ? "" : activeTitle;
-  const usedUrls =new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
+  const usedUrls = new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
 
   return (
     <div className="px-5 py-8">
-      <div className="mx-auto max-w-[110rem] mb-6 flex flex-wrap items-center gap-3">
+      <div className="mx-auto max-w-[110rem] mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-extrabold">{group.name}</h1>
         {group.className && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1 text-sm">כיתה {group.className}</span>}
         {group.subjectName && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1 text-sm">{group.subjectName}</span>}
@@ -935,6 +1192,7 @@ export default function Board({ groupId }: { groupId: number }) {
           <button
             className="btn btn-ghost"
             data-tip="הקוד שהתלמידים יזינו כדי להצטרף"
+            data-tip-edge="left"
             onClick={() => {
               navigator.clipboard?.writeText(group.joinCode);
               setCopied(true);
@@ -953,63 +1211,68 @@ export default function Board({ groupId }: { groupId: number }) {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collision}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => {
-          setDragCard(null);
-          setOverLesson(null);
-        }}
+        onDragCancel={resetDrag}
       >
         <div className="mx-auto max-w-[110rem] flex gap-5 items-start">
           <div className="min-w-0 flex-1">
-            <div className="overflow-x-auto pb-4">
-              <div className="flex gap-4 items-start w-max min-w-full pt-5 relative">
-                <div className="absolute top-2 inset-x-0 border-t-2 border-dashed border-blue/40" aria-hidden />
-                {data.lessons.map((l, i) => (
-                  <LessonColumn
-                    key={l.id}
-                    lesson={l}
-                    index={i}
-                    active={activeLesson === l.id}
-                    dropTarget={overLesson === l.id && dragCard !== null}
-                    dragging={dragCard !== null}
-                    busy={busy}
-                    onEnter={() => hoverLesson(l.id)}
-                    onLeave={() => enterTimer.current && clearTimeout(enterTimer.current)}
-                    onAddUrls={(urls) => addUrls(l.id, urls)}
-                    onRename={(title) => api(`/api/lessons/${l.id}`, "PATCH", { title }).then(load)}
-                    onTitleDraft={(t) => setTitleDrafts((p) => ({ ...p, [l.id]: t }))}
-                    onItemChange={itemChange}
-                    onItemDelete={itemDelete}
-                  />
-                ))}
-                <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>
-                  <Plus size={18} strokeWidth={2} /> שיעור
-                </button>
-              </div>
+            <TopicBar
+              topics={data.topics}
+              lessonCounts={lessonCounts}
+              currentId={currentTopicId}
+              onSelect={selectTopic}
+              onRename={renameTopic}
+              onAdd={addTopic}
+              onDelete={deleteTopic}
+            />
+
+            <Rope scrollRef={scrollRef} watchKey={`${currentTopicId}-${visibleLessons.length}`} />
+
+            <div ref={scrollRef} className="overflow-x-auto no-scrollbar pb-3">
+              <SortableContext items={visibleLessons.map((l) => `ls-${l.id}`)} strategy={horizontalListSortingStrategy}>
+                <div className="flex gap-4 items-start w-max min-w-full pt-2">
+                  {visibleLessons.map((l, i) => (
+                    <LessonColumn
+                      key={l.id}
+                      lesson={l}
+                      index={i}
+                      color={topicColor}
+                      active={activeLesson === l.id}
+                      dropTarget={overLesson === l.id && dragKind === "item"}
+                      dragging={dragKind === "item"}
+                      busy={busy}
+                      onEnter={() => hoverLesson(l.id)}
+                      onLeave={() => enterTimer.current && clearTimeout(enterTimer.current)}
+                      onAddUrls={(urls) => addUrls(l.id, urls)}
+                      onRename={(title) => api(`/api/lessons/${l.id}`, "PATCH", { title }).then(load)}
+                      onTitleDraft={(t) => setTitleDrafts((p) => ({ ...p, [l.id]: t }))}
+                      onItemChange={itemChange}
+                      onItemDelete={itemDelete}
+                    />
+                  ))}
+                  <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>
+                    <Plus size={18} strokeWidth={2} /> שיעור
+                  </button>
+                </div>
+              </SortableContext>
             </div>
 
-            <section className="mt-8">
-              <h2 className="text-xl font-bold mb-1" data-tip="תכנון יחידה, תרגיל חוזר, בוחן קבוע: דברים שלא שייכים לשיעור אחד">
-                פריטים רוחביים
-              </h2>
-              <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                {data.crossItems.map((c) => (
-                  <div key={c.id} className="bg-white border border-line rounded-xl p-2 flex gap-2.5 items-center">
-                    <Thumb item={c.item} size={40} />
-                    <a href={c.item.url} target="_blank" rel="noreferrer" className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
-                      {c.item.title}
-                    </a>
-                    <button className="btn-icon" data-tip="הסרה" aria-label="הסרה" onClick={() => removeCross(c.id)}>
-                      <X size={16} strokeWidth={2} />
-                    </button>
-                  </div>
-                ))}
-                <PasteZone onUrls={addCross} busy={busy} compact />
-              </div>
-            </section>
+            <CrossSection
+              open={crossOpen}
+              onToggle={() => setCrossOpen((v) => !v)}
+              items={visibleCross}
+              topicColor={topicColor}
+              dragging={dragKind === "item"}
+              isOver={overCross}
+              busy={busy}
+              currentTopicId={currentTopicId}
+              onAddUrls={addCross}
+              onRemove={removeCross}
+              onToggleScope={toggleCrossScope}
+            />
           </div>
 
           {warehouseOpen && (
@@ -1028,8 +1291,8 @@ export default function Board({ groupId }: { groupId: number }) {
         <DragOverlay dropAnimation={null}>
           {dragCard && (
             <div className="flex items-center gap-2.5 bg-white border-2 border-blue rounded-xl p-2 shadow-2xl w-72 cursor-grabbing">
-              <Thumb item={dragCard} size={40} />
-              <p className="text-sm font-medium line-clamp-2">{dragCard.title}</p>
+              {dragCard.kind !== "lesson" && <Thumb item={dragCard} size={40} />}
+              <p className="text-sm font-medium line-clamp-2">{dragCard.kind === "lesson" ? `שיעור: ${dragCard.title}` : dragCard.title}</p>
             </div>
           )}
         </DragOverlay>

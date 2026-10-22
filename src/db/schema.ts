@@ -47,6 +47,20 @@ export const sequences = pgTable("sequences", {
   visibility: text("visibility").notNull().default("private"),
   // מיקום "אנחנו כאן": שיעור שעד אליו הרצף נחשף לתלמידים.
   currentLessonId: integer("current_lesson_id"),
+  // הנושא שפתוח במסך המורה; נשמר כדי לחזור אליו בפעם הבאה.
+  currentTopicId: integer("current_topic_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// נושא = קבוצת שיעורים רצופה ברצף (יחידה), עם צבע משלו בסרגל הנושאים.
+export const topics = pgTable("topics", {
+  id: serial("id").primaryKey(),
+  sequenceId: integer("sequence_id")
+    .notNull()
+    .references(() => sequences.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  name: text("name").notNull(),
+  color: text("color").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -55,6 +69,7 @@ export const lessons = pgTable("lessons", {
   sequenceId: integer("sequence_id")
     .notNull()
     .references(() => sequences.id),
+  topicId: integer("topic_id").references(() => topics.id),
   position: integer("position").notNull(),
   title: text("title").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -110,6 +125,8 @@ export const crossItems = pgTable("cross_items", {
     .notNull()
     .references(() => items.id),
   note: text("note").notNull().default(""),
+  // שיוך לנושא. ריק = חל על כל הנושאים.
+  topicId: integer("topic_id").references(() => topics.id, { onDelete: "set null" }),
   // none | weekly | monthly: תזכורת חזרה בלבד, בלי לוגיקת תזמון בשלב 1.
   repeat: text("repeat").notNull().default("none"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
