@@ -1171,15 +1171,6 @@ export default function Board({ groupId }: { groupId: number }) {
     await load();
   }
 
-  async function deleteTopic(id: number) {
-    try {
-      await api(`/api/topics/${id}`, "DELETE");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "שגיאה");
-    }
-    await load();
-  }
-
   async function addCross(urls: string[]) {
     setBusy(true);
     try {
@@ -1281,6 +1272,9 @@ export default function Board({ groupId }: { groupId: number }) {
           key={`${group.id}-${group.name}-${group.className}-${group.subjectName}-${group.tags.join("|")}`}
           group={group}
           terms={terms}
+          topics={data.topics}
+          lessonCounts={lessonCounts}
+          onTopicsChanged={load}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false);
@@ -1323,7 +1317,6 @@ export default function Board({ groupId }: { groupId: number }) {
               onSelect={selectTopic}
               onRename={renameTopic}
               onAdd={addTopic}
-              onDelete={deleteTopic}
             />
 
             <Rope scrollRef={scrollRef} watchKey={`${currentTopicId}-${visibleLessons.length}`} />

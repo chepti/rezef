@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 
 export type Topic = { id: number; name: string; color: string };
 
@@ -12,18 +12,14 @@ function Segment({
   topic,
   lessonCount,
   active,
-  canDelete,
   onSelect,
   onRename,
-  onDelete,
 }: {
   topic: Topic;
   lessonCount: number;
   active: boolean;
-  canDelete: boolean;
   onSelect: () => void;
   onRename: (name: string) => void;
-  onDelete: () => void;
 }) {
   // הנושא הוא גם יעד לשחרור: גוררים שיעור על נושא כדי להעביר אותו אליו.
   const { setNodeRef, isOver } = useDroppable({ id: `topic-${topic.id}` });
@@ -58,19 +54,6 @@ function Segment({
           ) : (
             <span className="min-w-0 flex-1 truncate font-bold">{topic.name}</span>
           )}
-          {active && canDelete && (
-            <button
-              className="rounded-full p-1 hover:bg-white/25"
-              data-tip="מחיקת הנושא הריק"
-              aria-label="מחיקת הנושא"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <X size={14} strokeWidth={2} />
-            </button>
-          )}
         </div>
         <div className="mt-1.5 flex gap-1 h-1.5" aria-hidden>
           {Array.from({ length: stripes }).map((_, i) => (
@@ -93,7 +76,6 @@ export default function TopicBar({
   onSelect,
   onRename,
   onAdd,
-  onDelete,
 }: {
   topics: Topic[];
   lessonCounts: Record<number, number>;
@@ -101,7 +83,6 @@ export default function TopicBar({
   onSelect: (id: number) => void;
   onRename: (id: number, name: string) => void;
   onAdd: () => void;
-  onDelete: (id: number) => void;
 }) {
   return (
     <div className="flex items-start gap-2" role="tablist" aria-label="נושאים">
@@ -112,10 +93,8 @@ export default function TopicBar({
             topic={t}
             lessonCount={lessonCounts[t.id] ?? 0}
             active={t.id === currentId}
-            canDelete={topics.length > 1 && (lessonCounts[t.id] ?? 0) === 0}
             onSelect={() => onSelect(t.id)}
             onRename={(name) => onRename(t.id, name)}
-            onDelete={() => onDelete(t.id)}
           />
         ))}
       </div>

@@ -167,24 +167,70 @@ export async function createTopic(groupId: number, teacherId: number, name?: str
   return topic;
 }
 
-export async function renameTopic(topicId: number, teacherId: number, name: string) {
+// שם ומקום של נושא. index = המקום החדש ברשימת הנושאים (0 = ראשון).
+export async function updateTopic(topicId: number, teacherId: number, patch: { name?: string; index?: number }) {
   const db = await getDb();
-  await ownedTopic(topicId, teacherId);
-  const clean = name.trim();
-  if (!clean) throw new HttpError(400, "חסר שם נושא");
-  await db.update(topics).set({ name: clean }).where(eq(topics.id, topicId));
+  const { topic } = await ownedTopic(topicId, teacherId);
+
+  if (patch.name !== undefined) {
+    const clean = patch.name.trim();
+    if (!clean) throw new HttpError(400, "חסר שם נושא");
+    await db.update(topics).set({ name: clean }).where(eq(topics.id, topicId));
+  }
+
+  if (patch.index !== undefined) {
+    const siblings = await db
+      .select({ id: topics.id })
+      .from(topics)
+      .where(and(eq(topics.sequenceId, topic.sequenceId), ne(topics.id, topicId)))
+      .orderBy(asc(topics.position), asc(topics.id));
+    const ordered = siblings.map((s) => s.id);
+    ordered.splice(Math.max(0, Math.min(patch.index, ordered.length)), 0, topicId);
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < ordered.length; i++) {
+        await tx.update(topics).set({ position: i + 1 }).where(eq(topics.id, ordered[i]));
+      }
+    });
+  }
 }
 
-export async function deleteTopic(topicId: number, teacherId: number) {
+// מחיקת נושא. נושא ריק נמחק מיד. נושא עם שיעורים דורש החלטה מפורשת:
+// moveTo = העברת השיעורים (והפריטים הרוחביים) לנושא אחר, deleteLessons = מחיקת השיעורים עם הנושא.
+// הפריטים עצמם נשארים במחסן של המורה ("שלי") ואפשר לתלות אותם שוב.
+export async function deleteTopic(
+  topicId: number,
+  teacherId: number,
+  opts: { moveTo?: number; deleteLessons?: boolean } = {},
+) {
   const db = await getDb();
   const { topic } = await ownedTopic(topicId, teacherId);
   const siblings = await db.select().from(topics).where(eq(topics.sequenceId, topic.sequenceId)).orderBy(asc(topics.position));
   if (siblings.length <= 1) throw new HttpError(400, "אי אפשר למחוק את הנושא היחיד");
-  const inside = await db.select({ id: lessons.id }).from(lessons).where(eq(lessons.topicId, topicId)).limit(1);
-  if (inside.length > 0) throw new HttpError(400, "אפשר למחוק רק נושא ריק");
-  const other = siblings.find((t) => t.id !== topicId)!;
-  await db.update(sequences).set({ currentTopicId: other.id }).where(and(eq(sequences.id, topic.sequenceId), eq(sequences.currentTopicId, topicId)));
-  await db.delete(topics).where(eq(topics.id, topicId));
+
+  const inside = await db.select({ id: lessons.id }).from(lessons).where(eq(lessons.topicId, topicId));
+  if (inside.length > 0 && opts.moveTo === undefined && !opts.deleteLessons) {
+    throw new HttpError(400, "בנושא יש שיעורים: יש לבחור להעביר אותם לנושא אחר או למחוק אותם");
+  }
+  if (opts.moveTo !== undefined) {
+    if (opts.moveTo === topicId) throw new HttpError(400, "אי אפשר להעביר לאותו נושא");
+    await topicInSequence(opts.moveTo, topic.sequenceId);
+  }
+
+  const fallback = opts.moveTo ?? siblings.find((t) => t.id !== topicId)!.id;
+  await db.transaction(async (tx) => {
+    if (opts.moveTo !== undefined) {
+      await tx.update(lessons).set({ topicId: opts.moveTo }).where(eq(lessons.topicId, topicId));
+      await tx.update(crossItems).set({ topicId: opts.moveTo }).where(eq(crossItems.topicId, topicId));
+    } else if (inside.length > 0) {
+      // lesson_items נמחקים יחד עם השיעור (cascade). פריטים רוחביים של הנושא הופכים לכלליים.
+      await tx.delete(lessons).where(eq(lessons.topicId, topicId));
+    }
+    await tx
+      .update(sequences)
+      .set({ currentTopicId: fallback })
+      .where(and(eq(sequences.id, topic.sequenceId), eq(sequences.currentTopicId, topicId)));
+    await tx.delete(topics).where(eq(topics.id, topicId));
+  });
 }
 
 export async function setCurrentTopic(groupId: number, teacherId: number, topicId: number) {
