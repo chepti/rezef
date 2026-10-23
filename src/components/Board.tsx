@@ -322,7 +322,7 @@ function ItemRow({
       {expanded && (
         <div className="px-2.5 pb-2.5 pt-1 flex flex-col gap-2" onPointerDown={stop}>
           <div className="flex flex-wrap items-center gap-1">
-            {CONTENT_TYPES.map((t) => (
+            {CONTENT_TYPES.filter((t) => t.name !== "תבנית").map((t) => (
               <button
                 key={t.name}
                 className={`btn-icon !p-1.5 ${itemType === t.name ? "!bg-ink !text-white" : ""}`}
