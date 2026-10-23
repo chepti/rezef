@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Plus } from "lucide-react";
+import TagInput from "./tag-input";
 
 type Group = {
   id: number;
   name: string;
   className: string | null;
   subjectName: string | null;
+  tags: string[];
   schoolYear: string;
   joinCode: string;
 };
@@ -19,6 +21,7 @@ export default function Dashboard() {
   const [name, setName] = useState("");
   const [className, setClassName] = useState("");
   const [subjectName, setSubjectName] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loggedOut, setLoggedOut] = useState(false);
   const [terms, setTerms] = useState<{ classes: string[]; subjects: string[] }>({ classes: [], subjects: [] });
@@ -62,7 +65,7 @@ export default function Dashboard() {
     const res = await fetch("/api/groups", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, className, subjectName }),
+      body: JSON.stringify({ name, className, subjectName, tags }),
     });
     if (!res.ok) {
       setError("לא הצלחנו ליצור את הקבוצה");
@@ -71,6 +74,7 @@ export default function Dashboard() {
     setName("");
     setClassName("");
     setSubjectName("");
+    setTags([]);
     setCreating(false);
     await load();
   }
@@ -122,6 +126,12 @@ export default function Dashboard() {
               </option>
             ))}
           </select>
+          <div className="md:col-span-4">
+            <p className="text-sm text-muted mb-1.5" data-tip="יישמרו כתגיות בפוסטים שתפרסמו מהרצף לחומר פתוח">
+              תגיות נוספות
+            </p>
+            <TagInput value={tags} onChange={setTags} />
+          </div>
           <div className="md:col-span-4 flex gap-2">
             <button className="btn btn-primary" type="submit">
               יצירה
@@ -157,6 +167,11 @@ export default function Dashboard() {
               <div className="mt-3 flex flex-wrap gap-2 text-sm">
                 {g.className && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1">כיתה {g.className}</span>}
                 {g.subjectName && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1">{g.subjectName}</span>}
+                {g.tags?.map((t) => (
+                  <span key={t} className="rounded-full border border-line text-muted px-3 py-1">
+                    {t}
+                  </span>
+                ))}
                 <span className="rounded-full bg-page text-muted px-3 py-1">{g.schoolYear}</span>
               </div>
             </Link>

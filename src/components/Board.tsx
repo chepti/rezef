@@ -20,6 +20,8 @@ import { horizontalListSortingStrategy, SortableContext, useSortable, verticalLi
 import { CSS } from "@dnd-kit/utilities";
 import TopicBar, { type Topic } from "./board-topics";
 import Rope from "./board-rope";
+import PublishDialog, { type Terms } from "./board-publish";
+import GroupSettings from "./board-settings";
 import {
   Check,
   ChevronDown,
@@ -42,6 +44,9 @@ import {
   Play,
   Plus,
   Presentation,
+  Send,
+  Settings2,
+  Share2,
   Sparkles,
   StickyNote,
   X,
@@ -54,6 +59,7 @@ type Item = {
   imageUrl: string | null;
   siteName: string | null;
   kind: string;
+  publishedPostId: number | null;
   meta: { classes?: string[]; subjects?: string[]; author?: string };
 };
 type LessonItem = {
@@ -63,18 +69,19 @@ type LessonItem = {
   note: string;
   isAssignment: boolean;
   duration: string | null;
+  shareNote: boolean;
   item: Item;
 };
 type Lesson = { id: number; title: string; topicId: number | null; items: LessonItem[] };
 type CrossItem = { id: number; note: string; topicId: number | null; item: Item };
 type BoardData = {
-  group: { id: number; name: string; className: string | null; subjectName: string | null; joinCode: string };
+  group: { id: number; name: string; className: string | null; subjectName: string | null; tags: string[]; joinCode: string };
   sequence: { id: number; currentTopicId: number | null };
   topics: Topic[];
   lessons: Lesson[];
   crossItems: CrossItem[];
 };
-type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "duration">>;
+type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "duration" | "shareNote">>;
 
 // מה שנגרר מהמחסן: קישור מחומר פתוח (ייווצר פריט) או פריט קיים של המורה.
 type WhCard =
@@ -221,11 +228,13 @@ function ItemRow({
   expanded,
   onChange,
   onDelete,
+  onPublish,
 }: {
   li: LessonItem;
   expanded: boolean;
   onChange: (patch: ItemPatch) => void;
   onDelete: () => void;
+  onPublish: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
@@ -302,6 +311,16 @@ function ItemRow({
             >
               <Pin size={16} strokeWidth={2} />
             </button>
+            {li.item.kind !== "openstuff" &&
+              (li.item.publishedPostId ? (
+                <span className="btn-icon !p-1.5 !text-green-600" data-tip="נשלח לחומר פתוח וממתין לאישור">
+                  <Check size={16} strokeWidth={2} />
+                </span>
+              ) : (
+                <button className="btn-icon !p-1.5" data-tip="פרסום בחומר פתוח" aria-label="פרסום בחומר פתוח" onClick={onPublish}>
+                  <Send size={16} strokeWidth={2} />
+                </button>
+              ))}
             <button className="btn-icon !p-1.5 ms-auto" data-tip="הסרה מהשיעור" aria-label="הסרה" onClick={onDelete}>
               <X size={16} strokeWidth={2} />
             </button>
@@ -322,6 +341,21 @@ function ItemRow({
                 <DurationIcon kind={d.key} size={16} />
               </button>
             ))}
+            {li.item.kind === "openstuff" && (
+              <button
+                className={`btn-icon !p-1.5 ms-auto ${li.shareNote ? "!bg-blue-soft !text-blue-dark" : ""}`}
+                data-tip={
+                  li.shareNote
+                    ? "ההערה תוצג בעמוד הפריט בחומר פתוח, עם שמך. לחצו לביטול"
+                    : "ההערה פרטית. לחצו כדי להציג אותה בעמוד הפריט בחומר פתוח"
+                }
+                aria-label="שיתוף ההערה"
+                aria-pressed={li.shareNote}
+                onClick={() => onChange({ shareNote: !li.shareNote })}
+              >
+                <Share2 size={16} strokeWidth={2} />
+              </button>
+            )}
           </div>
 
           {itemTags(li.item).length > 0 && (
@@ -396,6 +430,7 @@ function LessonColumn({
   onTitleDraft,
   onItemChange,
   onItemDelete,
+  onPublish,
 }: {
   lesson: Lesson;
   index: number;
@@ -411,6 +446,7 @@ function LessonColumn({
   onTitleDraft: (title: string) => void;
   onItemChange: (id: number, patch: ItemPatch) => void;
   onItemDelete: (id: number) => void;
+  onPublish: (li: LessonItem) => void;
 }) {
   // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
@@ -487,6 +523,7 @@ function LessonColumn({
               expanded={active}
               onChange={(p) => onItemChange(li.id, p)}
               onDelete={() => onItemDelete(li.id)}
+              onPublish={() => onPublish(li)}
             />
           ))}
         </div>
@@ -840,6 +877,10 @@ export default function Board({ groupId }: { groupId: number }) {
   const [overLesson, setOverLesson] = useState<number | null>(null);
   const [overCross, setOverCross] = useState(false);
   const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
+  const [publishFor, setPublishFor] = useState<LessonItem | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [terms, setTerms] = useState<Terms>({ classes: [], subjects: [], categories: [] });
+  const [notice, setNotice] = useState("");
   const activeRef = useRef<number | null>(null);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -888,6 +929,13 @@ export default function Board({ groupId }: { groupId: number }) {
   useEffect(() => {
     activeRef.current = activeLesson;
   }, [activeLesson]);
+
+  useEffect(() => {
+    // הרשימות של חומר פתוח (כיתות, תחומים, קטגוריות) לחלון הפרסום ולהגדרות הקבוצה.
+    api("/api/taxonomies", "GET")
+      .then((t: Terms) => setTerms(t))
+      .catch(() => {});
+  }, []);
 
   const bumpWarehouse = () => setWarehouseKey((k) => k + 1);
 
@@ -1183,6 +1231,20 @@ export default function Board({ groupId }: { groupId: number }) {
         <h1 className="text-3xl font-extrabold">{group.name}</h1>
         {group.className && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1 text-sm">כיתה {group.className}</span>}
         {group.subjectName && <span className="rounded-full bg-blue-soft text-blue-dark px-3 py-1 text-sm">{group.subjectName}</span>}
+        {group.tags.map((t) => (
+          <span key={t} className="rounded-full border border-line text-muted px-3 py-1 text-sm">
+            {t}
+          </span>
+        ))}
+        <button
+          className={`btn-icon bg-white border border-line !p-2 ${settingsOpen ? "!bg-blue-soft !text-blue-dark" : ""}`}
+          data-tip="הגדרות הקבוצה: כיתה, תחום ותגיות"
+          aria-label="הגדרות הקבוצה"
+          aria-expanded={settingsOpen}
+          onClick={() => setSettingsOpen((v) => !v)}
+        >
+          <Settings2 size={16} strokeWidth={2} />
+        </button>
         <div className="ms-auto flex gap-2">
           {!warehouseOpen && (
             <button className="btn btn-primary" onClick={() => setWarehouseOpen(true)}>
@@ -1208,6 +1270,41 @@ export default function Board({ groupId }: { groupId: number }) {
       </div>
 
       {error && <p className="mx-auto max-w-[110rem] text-coral mb-3">{error}</p>}
+      {notice && (
+        <p className="mx-auto max-w-[110rem] mb-3 rounded-full bg-blue-soft px-4 py-2 text-sm text-blue-dark" role="status">
+          {notice}
+        </p>
+      )}
+
+      {settingsOpen && (
+        <GroupSettings
+          key={`${group.id}-${group.name}-${group.className}-${group.subjectName}-${group.tags.join("|")}`}
+          group={group}
+          terms={terms}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => {
+            setSettingsOpen(false);
+            load();
+            bumpWarehouse();
+          }}
+        />
+      )}
+
+      {publishFor && (
+        <PublishDialog
+          item={publishFor.item}
+          note={publishFor.note}
+          context={{ className: group.className, subjectName: group.subjectName, tags: group.tags }}
+          terms={terms}
+          onClose={() => setPublishFor(null)}
+          onDone={() => {
+            setPublishFor(null);
+            setNotice("הפריט נשלח לבדיקה, ויופיע בחומר פתוח אחרי אישור.");
+            setTimeout(() => setNotice(""), 6000);
+            load();
+          }}
+        />
+      )}
 
       <DndContext
         sensors={sensors}
@@ -1251,6 +1348,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onTitleDraft={(t) => setTitleDrafts((p) => ({ ...p, [l.id]: t }))}
                       onItemChange={itemChange}
                       onItemDelete={itemDelete}
+                      onPublish={setPublishFor}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>

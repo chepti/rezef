@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { MessageSquare } from "lucide-react";
 import { Rubik } from "next/font/google";
 import "./globals.css";
 
@@ -25,6 +26,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Image src="/logo.png" alt="חומר פתוח" width={96} height={48} priority />
               <span className="text-lg font-extrabold">הרצף</span>
             </Link>
+            <a
+              href={`mailto:chepti@gmail.com?subject=${encodeURIComponent("משוב: הרצף של חומר פתוח")}`}
+              className="btn btn-ghost ms-auto !py-1.5"
+              data-tip="נשמח לשמוע: מה עובד ומה מפריע"
+            >
+              <MessageSquare size={16} strokeWidth={2} /> משוב
+            </a>
           </div>
         </header>
         <main className="flex-1">{children}</main>

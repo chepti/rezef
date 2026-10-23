@@ -2,7 +2,8 @@ const WP = (process.env.WP_URL ?? "https://openstuff.co.il").replace(/\/$/, "");
 const TERMS_TTL_MS = 6 * 60 * 60 * 1000;
 
 type TermList = Array<{ id: number; name: string }>;
-const termCache: Partial<Record<"classes" | "subjects", { at: number; terms: TermList }>> = {};
+type TermTax = "classes" | "subjects" | "categories";
+const termCache: Partial<Record<TermTax, { at: number; terms: TermList }>> = {};
 
 async function wp<T>(path: string): Promise<{ data: T; total: number }> {
   const res = await fetch(`${WP}/wp-json/wp/v2/${path}`, {
@@ -13,7 +14,7 @@ async function wp<T>(path: string): Promise<{ data: T; total: number }> {
   return { data: (await res.json()) as T, total: Number(res.headers.get("x-wp-total") ?? 0) };
 }
 
-export async function getTerms(tax: "classes" | "subjects"): Promise<TermList> {
+export async function getTerms(tax: TermTax): Promise<TermList> {
   const hit = termCache[tax];
   if (hit && Date.now() - hit.at < TERMS_TTL_MS) return hit.terms;
   const all: TermList = [];

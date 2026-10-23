@@ -29,9 +29,38 @@ export async function listGroups(teacherId: number) {
   return db.select().from(groups).where(eq(groups.teacherId, teacherId)).orderBy(asc(groups.createdAt));
 }
 
+export function cleanTags(tags: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  for (const raw of tags ?? []) {
+    const t = raw.trim().slice(0, 30);
+    if (t) seen.add(t);
+  }
+  return [...seen].slice(0, 12);
+}
+
+export async function updateGroup(
+  groupId: number,
+  teacherId: number,
+  patch: { name?: string; className?: string | null; subjectName?: string | null; tags?: string[] },
+) {
+  const db = await getDb();
+  await ownedGroup(groupId, teacherId);
+  const set: Partial<typeof groups.$inferInsert> = {};
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new HttpError(400, "חסר שם קבוצה");
+    set.name = name;
+  }
+  if (patch.className !== undefined) set.className = patch.className?.trim() || null;
+  if (patch.subjectName !== undefined) set.subjectName = patch.subjectName?.trim() || null;
+  if (patch.tags !== undefined) set.tags = cleanTags(patch.tags);
+  if (Object.keys(set).length === 0) return;
+  await db.update(groups).set(set).where(eq(groups.id, groupId));
+}
+
 export async function createGroup(
   teacherId: number,
-  input: { name: string; className?: string; subjectName?: string },
+  input: { name: string; className?: string; subjectName?: string; tags?: string[] },
 ) {
   const db = await getDb();
   const name = input.name.trim();
@@ -51,6 +80,7 @@ export async function createGroup(
       name,
       className: input.className?.trim() || null,
       subjectName: input.subjectName?.trim() || null,
+      tags: cleanTags(input.tags),
       schoolYear: currentSchoolYear(),
       joinCode,
     })
@@ -480,12 +510,20 @@ export async function updateCross(id: number, teacherId: number, patch: { topicI
 export async function updateLessonItem(
   id: number,
   teacherId: number,
-  patch: { note?: string; phase?: string | null; level?: string | null; isAssignment?: boolean; duration?: string | null },
+  patch: {
+    note?: string;
+    phase?: string | null;
+    level?: string | null;
+    isAssignment?: boolean;
+    duration?: string | null;
+    shareNote?: boolean;
+  },
 ) {
   const db = await getDb();
   await ownedLessonItem(id, teacherId);
   const set: Partial<typeof lessonItems.$inferInsert> = {};
   if (patch.duration !== undefined) set.duration = patch.duration;
+  if (patch.shareNote !== undefined) set.shareNote = patch.shareNote;
   if (patch.note !== undefined) set.note = patch.note.slice(0, 2000);
   if (patch.phase !== undefined) set.phase = patch.phase;
   if (patch.level !== undefined) set.level = patch.level;

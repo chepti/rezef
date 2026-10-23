@@ -6,6 +6,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(80),
   className: z.string().max(30).optional(),
   subjectName: z.string().max(60).optional(),
+  tags: z.array(z.string().max(30)).max(12).optional(),
 });
 
 export async function GET() {

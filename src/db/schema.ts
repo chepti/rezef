@@ -31,6 +31,8 @@ export const groups = pgTable("groups", {
   // הקשר שמתייג אוטומטית כל פריט שנתלה ברצף של הקבוצה.
   className: text("class_name"),
   subjectName: text("subject_name"),
+  // תגיות נוספות של הקבוצה (חנ"מ, חמ"ד, ממלכתי...). נשלחות עם כל פריט שמפרסמים מהרצף לחומר פתוח.
+  tags: jsonb("tags").$type<string[]>().notNull().default([]),
   schoolYear: text("school_year").notNull(),
   joinCode: text("join_code").notNull().unique(),
   archivedAt: timestamp("archived_at"),
@@ -90,6 +92,9 @@ export const items = pgTable("items", {
   openstuffPostId: integer("openstuff_post_id"),
   // תיוג שנשלף אוטומטית: { classes: string[], subjects: string[], author: string }
   meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+  // כשפורסם מהרצף לחומר פתוח: מזהה הפוסט (ממתין לאישור) ומתי נשלח.
+  publishedPostId: integer("published_post_id"),
+  publishedAt: timestamp("published_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -110,6 +115,8 @@ export const lessonItems = pgTable("lesson_items", {
   isAssignment: boolean("is_assignment").notNull().default(false),
   // משך מתוכנן, באותה סקאלה כמו טופס ההעלאה בחומר פתוח: quarter | half | lesson | double | unit
   duration: text("duration"),
+  // המורה הסכימה שהערת השימוש תופיע בחומר פתוח ("איך משתמשים"). ברירת מחדל: פרטית.
+  shareNote: boolean("share_note").notNull().default(false),
   // הוחלף ב-duration. נשאר בסכמה כדי לא למחוק עמודה בייצור; אפשר להסיר במיגרציה עתידית.
   minutes: integer("minutes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
