@@ -248,7 +248,7 @@ async function ownedGroup(groupId: number, teacherId: number) {
   return group;
 }
 
-async function ownedLesson(lessonId: number, teacherId: number) {
+export async function ownedLesson(lessonId: number, teacherId: number) {
   const db = await getDb();
   const [row] = await db
     .select({ lesson: lessons, group: groups })

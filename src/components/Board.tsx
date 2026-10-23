@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import TopicBar, { type Topic } from "./board-topics";
 import Rope from "./board-rope";
 import PublishDialog, { type Terms } from "./board-publish";
+import PublishLessonDialog from "./board-publish-lesson";
 import GroupSettings from "./board-settings";
 import {
   Check,
@@ -77,7 +78,7 @@ type LessonItem = {
   shareNote: boolean;
   item: Item;
 };
-type Lesson = { id: number; title: string; topicId: number | null; items: LessonItem[] };
+type Lesson = { id: number; title: string; topicId: number | null; publishedCollectionUrl: string | null; items: LessonItem[] };
 type CrossItem = { id: number; note: string; topicId: number | null; duration: string | null; item: Item };
 type BoardData = {
   group: { id: number; name: string; className: string | null; subjectName: string | null; tags: string[]; joinCode: string };
@@ -480,6 +481,7 @@ function LessonColumn({
   onItemDelete,
   onPublish,
   onItemType,
+  onPublishLesson,
 }: {
   lesson: Lesson;
   index: number;
@@ -497,6 +499,7 @@ function LessonColumn({
   onItemDelete: (id: number) => void;
   onPublish: (li: LessonItem) => void;
   onItemType: (itemId: number, type: string) => void;
+  onPublishLesson: () => void;
 }) {
   // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
@@ -561,6 +564,17 @@ function LessonColumn({
           <span className="shrink-0 rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-1 tabular-nums" data-tip="הערכה לפי משך הפריטים">
             כ־{total} דק׳
           </span>
+        )}
+        {lesson.items.length > 0 && (
+          <button
+            type="button"
+            className={`btn-icon shrink-0 !p-1.5 ${lesson.publishedCollectionUrl ? "!text-green-600" : ""}`}
+            data-tip={lesson.publishedCollectionUrl ? "פורסם כאוסף. לחצו לעדכון" : "פרסום השיעור כאוסף בחומר פתוח"}
+            aria-label="פרסום השיעור כאוסף"
+            onClick={onPublishLesson}
+          >
+            <Send size={16} strokeWidth={2} />
+          </button>
         )}
       </div>
 
@@ -976,6 +990,7 @@ export default function Board({ groupId }: { groupId: number }) {
   const [overCross, setOverCross] = useState(false);
   const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
   const [publishFor, setPublishFor] = useState<LessonItem | null>(null);
+  const [publishLessonFor, setPublishLessonFor] = useState<Lesson | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [terms, setTerms] = useState<Terms>({ classes: [], subjects: [], categories: [] });
   const [notice, setNotice] = useState("");
@@ -1450,6 +1465,22 @@ export default function Board({ groupId }: { groupId: number }) {
         />
       )}
 
+      {publishLessonFor && (
+        <PublishLessonDialog
+          lesson={publishLessonFor}
+          context={{ className: group.className, subjectName: group.subjectName, tags: group.tags }}
+          terms={terms}
+          onClose={() => {
+            setPublishLessonFor(null);
+            load();
+          }}
+          onDone={() => {
+            setPublishLessonFor(null);
+            load();
+          }}
+        />
+      )}
+
       <DndContext
         sensors={sensors}
         collisionDetection={collision}
@@ -1493,6 +1524,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onItemDelete={itemDelete}
                       onPublish={setPublishFor}
                       onItemType={itemType}
+                      onPublishLesson={() => setPublishLessonFor(l)}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>
