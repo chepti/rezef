@@ -197,8 +197,20 @@ async function api(path: string, method: string, body?: unknown) {
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "שגיאה");
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    // תשובה בלי JSON (למשל 502 בזמן שהשרת מתעדכן) מקבלת הסבר, ולא "שגיאה" סתמית.
+    throw new Error(data?.error ?? (res.status >= 500 ? "השרת לא ענה כרגע. נסו שוב בעוד רגע" : "שגיאה"));
+  }
   return res.json();
+}
+
+// הדבקה של הרבה קישורים נשלחת בקבוצות, כדי שלא תיפול על מגבלת הבקשה ולא תיתקע על קישור איטי.
+const URL_CHUNK = 20;
+function chunk<T>(arr: T[], size = URL_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 function itemTags(item: Item): string[] {
@@ -395,7 +407,7 @@ function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void
     <div className={`rounded-xl border border-dashed border-blue/40 bg-blue-soft/40 ${compact ? "px-2 py-1.5" : "p-2.5"}`}>
       <input
         className="w-full bg-transparent outline-none text-sm placeholder:text-blue-dark/60 text-center"
-        placeholder={busy ? "מוסיפים…" : "הדביקו קישור"}
+        placeholder={busy ? "מוסיפים…" : "הדביקו קישור/ים"}
         value={value}
         disabled={busy}
         onChange={(e) => setValue(e.target.value)}
@@ -658,7 +670,9 @@ function Warehouse({
   async function pasteToWarehouse(urls: string[]) {
     setPasteBusy(true);
     try {
-      await api("/api/items", "POST", { urls });
+      for (const part of chunk(urls)) {
+        await api("/api/items", "POST", { urls: part });
+      }
       onItemsChanged();
     } finally {
       setPasteBusy(false);
@@ -782,7 +796,49 @@ function Warehouse({
 
 /* ---------- הלוח ---------- */
 
-/* ---------- פריטים רוחביים ---------- */
+/* ---------- קישורים כלליים ---------- */
+
+// קישור כללי הוא גם פריט שאפשר לגרור אל שיעור מסוים.
+function CrossCard({
+  c,
+  topicColor,
+  currentTopicId,
+  onRemove,
+  onToggleScope,
+}: {
+  c: CrossItem;
+  topicColor: string;
+  currentTopicId: number | null;
+  onRemove: (id: number) => void;
+  onToggleScope: (c: CrossItem) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `cr-${c.id}` });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={`bg-white border border-line rounded-xl p-2 flex gap-2.5 items-center cursor-grab touch-none hover:border-blue transition ${isDragging ? "opacity-40" : ""}`}
+    >
+      <Thumb item={c.item} size={40} />
+      <a href={c.item.url} target="_blank" rel="noreferrer" draggable={false} className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
+        {c.item.title}
+      </a>
+      <button
+        className="btn-icon"
+        data-tip={c.topicId === null ? "חל על כל הנושאים. לחצו לשיוך לנושא הנוכחי" : "משויך לנושא. לחצו להחלה על כל הנושאים"}
+        aria-label="שיוך לנושא"
+        onClick={() => onToggleScope(c)}
+        disabled={currentTopicId === null}
+      >
+        {c.topicId === null ? <Layers size={16} strokeWidth={2} /> : <span className="block h-3.5 w-3.5 rounded-full" style={{ background: topicColor }} />}
+      </button>
+      <button className="btn-icon" data-tip="הסרה" aria-label="הסרה" onClick={() => onRemove(c.id)}>
+        <X size={16} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
 
 function CrossSection({
   open,
@@ -818,39 +874,18 @@ function CrossSection({
       }`}
     >
       <button className="flex w-full items-center gap-2 text-start" onClick={onToggle} aria-expanded={open}>
-        <h2 className="text-lg font-bold" data-tip="תכנון יחידה, תרגיל חוזר, בוחן קבוע: דברים שלא שייכים לשיעור אחד">
-          פריטים רוחביים
+        <h2 className="text-lg font-bold" data-tip="קישורים שעדיין לא שייכים לשיעור: מדביקים כאן הרבה בבת אחת וגוררים לשיעורים. אפשר גם לשמור כאן דברים כלליים כמו תכנון יחידה או בוחן קבוע">
+          קישורים כלליים
         </h2>
         <span className="rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-0.5 tabular-nums">{items.length}</span>
-        {dragging && <span className="text-sm text-blue-dark">שחררו כאן כדי להפוך לפריט רוחבי</span>}
+        {dragging && <span className="text-sm text-blue-dark">שחררו כאן כדי להפוך לקישור כללי</span>}
         <span className="ms-auto text-muted">{open ? <ChevronUp size={18} strokeWidth={2} /> : <ChevronDown size={18} strokeWidth={2} />}</span>
       </button>
 
       {open && (
         <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((c) => (
-            <div key={c.id} className="bg-white border border-line rounded-xl p-2 flex gap-2.5 items-center">
-              <Thumb item={c.item} size={40} />
-              <a href={c.item.url} target="_blank" rel="noreferrer" draggable={false} className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
-                {c.item.title}
-              </a>
-              <button
-                className="btn-icon"
-                data-tip={c.topicId === null ? "חל על כל הנושאים. לחצו לשיוך לנושא הנוכחי" : "משויך לנושא. לחצו להחלה על כל הנושאים"}
-                aria-label="שיוך לנושא"
-                onClick={() => onToggleScope(c)}
-                disabled={currentTopicId === null}
-              >
-                {c.topicId === null ? (
-                  <Layers size={16} strokeWidth={2} />
-                ) : (
-                  <span className="block h-3.5 w-3.5 rounded-full" style={{ background: topicColor }} />
-                )}
-              </button>
-              <button className="btn-icon" data-tip="הסרה" aria-label="הסרה" onClick={() => onRemove(c.id)}>
-                <X size={16} strokeWidth={2} />
-              </button>
-            </div>
+            <CrossCard key={c.id} c={c} topicColor={topicColor} currentTopicId={currentTopicId} onRemove={onRemove} onToggleScope={onToggleScope} />
           ))}
           <PasteZone onUrls={onAddUrls} busy={busy} compact />
         </div>
@@ -874,6 +909,7 @@ export default function Board({ groupId }: { groupId: number }) {
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
   const [dragKind, setDragKind] = useState<DragKind>(null);
+  const [dragFromCross, setDragFromCross] = useState(false);
   const [overLesson, setOverLesson] = useState<number | null>(null);
   const [overCross, setOverCross] = useState(false);
   const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
@@ -944,7 +980,10 @@ export default function Board({ groupId }: { groupId: number }) {
       setBusy(true);
       setError("");
       try {
-        await api(`/api/lessons/${lessonId}/links`, "POST", { urls, index });
+        const parts = chunk(urls);
+        for (let i = 0; i < parts.length; i++) {
+          await api(`/api/lessons/${lessonId}/links`, "POST", { urls: parts[i], index: index === undefined ? undefined : index + i * URL_CHUNK });
+        }
         await load();
         setWarehouseKey((k) => k + 1);
       } catch (e) {
@@ -1003,6 +1042,11 @@ export default function Board({ groupId }: { groupId: number }) {
       const lesson = data.lessons.find((l) => l.id === Number(id.slice(3)));
       setDragKind("lesson");
       if (lesson) setDragCard({ title: lesson.title, imageUrl: null, kind: "lesson" });
+    } else if (id.startsWith("cr-") && data) {
+      const cross = data.crossItems.find((c) => c.id === Number(id.slice(3)));
+      setDragKind("item");
+      setDragFromCross(true);
+      if (cross) setDragCard({ title: cross.item.title, imageUrl: cross.item.imageUrl, kind: cross.item.kind });
     }
   }
 
@@ -1015,6 +1059,7 @@ export default function Board({ groupId }: { groupId: number }) {
   function resetDrag() {
     setDragCard(null);
     setDragKind(null);
+    setDragFromCross(false);
     setOverLesson(null);
     setOverCross(false);
   }
@@ -1043,7 +1088,21 @@ export default function Board({ groupId }: { groupId: number }) {
       return;
     }
 
-    // שחרור על הפריטים הרוחביים: הופך את הפריט לרוחבי (פריט משיעור עובר, מהמחסן מתווסף).
+    // קישור כללי שנגרר אל שיעור: עובר לשיעור, במקום שבו שוחרר.
+    if (activeId.startsWith("cr-")) {
+      const dest = locate(overId);
+      if (!dest) return;
+      setActiveLesson(dest.lessonId);
+      try {
+        await api(`/api/cross/${Number(activeId.slice(3))}/to-lesson`, "POST", { lessonId: dest.lessonId, index: dest.index });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "ההעברה נכשלה");
+      }
+      await load();
+      return;
+    }
+
+    // שחרור על הקישורים הכלליים: הופך את הפריט לקישור כללי (פריט משיעור עובר, מהמחסן מתווסף).
     if (overId === "cross-zone") {
       setBusy(true);
       try {
@@ -1174,7 +1233,9 @@ export default function Board({ groupId }: { groupId: number }) {
   async function addCross(urls: string[]) {
     setBusy(true);
     try {
-      await api(`/api/groups/${groupId}/cross`, "POST", { urls, topicId: currentTopicId });
+      for (const part of chunk(urls)) {
+        await api(`/api/groups/${groupId}/cross`, "POST", { urls: part, topicId: currentTopicId });
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "שגיאה");
@@ -1356,8 +1417,8 @@ export default function Board({ groupId }: { groupId: number }) {
               onToggle={() => setCrossOpen((v) => !v)}
               items={visibleCross}
               topicColor={topicColor}
-              dragging={dragKind === "item"}
-              isOver={overCross}
+              dragging={dragKind === "item" && !dragFromCross}
+              isOver={overCross && !dragFromCross}
               busy={busy}
               currentTopicId={currentTopicId}
               onAddUrls={addCross}

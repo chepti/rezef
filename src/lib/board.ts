@@ -386,8 +386,8 @@ async function unfurlMany(urls: string[]) {
   const unique = [...new Set(urls.map((u) => u.trim()).filter(Boolean))].slice(0, MAX_LINKS_PER_PASTE);
   const results: Array<NonNullable<Awaited<ReturnType<typeof unfurl>>>> = [];
   // במקביל, בקבוצות קטנות, כדי לא להציף אתרים חיצוניים.
-  for (let i = 0; i < unique.length; i += 5) {
-    const batch = await Promise.all(unique.slice(i, i + 5).map((u) => unfurl(u)));
+  for (let i = 0; i < unique.length; i += 8) {
+    const batch = await Promise.all(unique.slice(i, i + 8).map((u) => unfurl(u)));
     for (const r of batch) if (r) results.push(r);
   }
   return results;
@@ -521,7 +521,27 @@ export async function addCrossFromItem(groupId: number, teacherId: number, itemI
   return row;
 }
 
-// גרירת פריט משיעור אל הפריטים הרוחביים: מעביר (לא משכפל) את הפריט.
+// גרירת קישור כללי אל שיעור מסוים: מעביר (לא משכפל), ושומר את ההערה שלו.
+export async function crossItemToLesson(crossId: number, teacherId: number, lessonId: number, index?: number) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ ci: crossItems, group: groups })
+    .from(crossItems)
+    .innerJoin(sequences, eq(sequences.id, crossItems.sequenceId))
+    .innerJoin(groups, eq(groups.id, sequences.groupId))
+    .where(eq(crossItems.id, crossId))
+    .limit(1);
+  if (!row || row.group.teacherId !== teacherId) throw new HttpError(404, "הקישור לא נמצא");
+  const { lesson } = await ownedLesson(lessonId, teacherId);
+  if (lesson.sequenceId !== row.ci.sequenceId) throw new HttpError(400, "אי אפשר להעביר בין קבוצות");
+
+  const [created] = await attachItems(lessonId, [row.ci.itemId], index);
+  if (row.ci.note) await db.update(lessonItems).set({ note: row.ci.note }).where(eq(lessonItems.id, created.id));
+  await db.delete(crossItems).where(eq(crossItems.id, crossId));
+  return created;
+}
+
+// גרירת פריט משיעור אל הקישורים הכלליים: מעביר (לא משכפל) את הפריט.
 export async function lessonItemToCross(lessonItemId: number, teacherId: number, topicId?: number | null) {
   const db = await getDb();
   const { li, group } = await ownedLessonItem(lessonItemId, teacherId);
