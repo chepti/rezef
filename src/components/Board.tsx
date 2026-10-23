@@ -32,23 +32,26 @@ import {
   GripVertical,
   Layers,
   Dumbbell,
+  File as FileGeneric,
   FileText,
   Gamepad2,
+  LayoutTemplate,
   Lightbulb,
   Library,
   Link2,
-  Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
-  Play,
   Plus,
   Presentation,
+  Printer,
   Send,
   Settings2,
   Share2,
+  Smartphone,
   Sparkles,
   StickyNote,
+  Video,
   X,
 } from "lucide-react";
 
@@ -59,12 +62,14 @@ type Item = {
   imageUrl: string | null;
   siteName: string | null;
   kind: string;
+  contentType: string | null;
   publishedPostId: number | null;
   meta: { classes?: string[]; subjects?: string[]; author?: string };
 };
 type LessonItem = {
   id: number;
   lessonId: number;
+  itemId: number;
   phase: string | null;
   note: string;
   isAssignment: boolean;
@@ -73,7 +78,7 @@ type LessonItem = {
   item: Item;
 };
 type Lesson = { id: number; title: string; topicId: number | null; items: LessonItem[] };
-type CrossItem = { id: number; note: string; topicId: number | null; item: Item };
+type CrossItem = { id: number; note: string; topicId: number | null; duration: string | null; item: Item };
 type BoardData = {
   group: { id: number; name: string; className: string | null; subjectName: string | null; tags: string[]; joinCode: string };
   sequence: { id: number; currentTopicId: number | null };
@@ -85,8 +90,8 @@ type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "d
 
 // מה שנגרר מהמחסן: קישור מחומר פתוח (ייווצר פריט) או פריט קיים של המורה.
 type WhCard =
-  | { kind: "os"; key: string; url: string; title: string; imageUrl: string | null; tags: string[] }
-  | { kind: "item"; key: string; itemId: number; url: string; title: string; imageUrl: string | null; tags: string[]; placed: number };
+  | { kind: "os"; key: string; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[] }
+  | { kind: "item"; key: string; itemId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[]; placed: number };
 
 const PHASES = [
   { name: "הקניה", icon: Lightbulb },
@@ -97,14 +102,18 @@ const PHASES = [
 ] as const;
 // אותה סקאלה ואותם אייקונים כמו "כמה זמן" בטופס ההעלאה של חומר פתוח.
 const DURATIONS = [
+  { key: "five", label: "חמש דקות", minutes: 5 },
   { key: "quarter", label: "רבע שעה", minutes: 15 },
   { key: "half", label: "חצי שעה", minutes: 30 },
   { key: "lesson", label: "שיעור", minutes: 45 },
   { key: "double", label: "שני שיעורים", minutes: 90 },
   { key: "unit", label: "יחידה ארוכה", minutes: 0 },
 ] as const;
+// "יחידה ארוכה" נפרשת על כמה מפגשים, ולכן מתאימה רק לקישורים הכלליים ולא לפריט בתוך שיעור.
+const LESSON_DURATIONS = DURATIONS.filter((d) => d.key !== "unit");
 
 const WEDGES: Record<string, string> = {
+  five: "M12 12 L12 5.8 A6.2 6.2 0 0 1 15.1 6.63 Z",
   quarter: "M12 12 L12 5.8 A6.2 6.2 0 0 1 18.2 12 Z",
   half: "M12 12 L12 5.8 A6.2 6.2 0 0 1 12 18.2 Z",
   lesson: "M12 12 L12 5.8 A6.2 6.2 0 1 1 5.8 12 Z",
@@ -163,26 +172,32 @@ function OpenstuffMark({ size = 16 }: { size?: number; strokeWidth?: number }) {
   );
 }
 
-const KIND_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
-  openstuff: OpenstuffMark,
-  youtube: Play,
-  video: Play,
-  slides: Presentation,
-  doc: FileText,
-  file: Paperclip,
-  game: Gamepad2,
-  link: Link2,
-};
-const KIND_LABEL: Record<string, string> = {
-  openstuff: "חומר פתוח",
+// סוג התוכן הוא הקטגוריות של חומר פתוח, עם אותם אייקונים שהאתר משתמש בהם בכרטיסים.
+const CONTENT_TYPES = [
+  { name: "סרטון", icon: Video },
+  { name: "מצגת", icon: Presentation },
+  { name: "להדפסה", icon: Printer },
+  { name: "מערך שיעור", icon: FileText },
+  { name: "פעילות", icon: Gamepad2 },
+  { name: "כלי דיגיטלי", icon: Smartphone },
+  { name: "תבנית", icon: LayoutTemplate },
+  { name: "אחר", icon: FileGeneric },
+] as const;
+const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = Object.fromEntries(
+  CONTENT_TYPES.map((t) => [t.name, t.icon]),
+);
+// ניחוש כשעוד אין סוג שמור (קישור חיצוני חדש, או פריט לפני המילוי הראשוני).
+const KIND_TO_TYPE: Record<string, string> = {
   youtube: "סרטון",
   video: "סרטון",
   slides: "מצגת",
-  doc: "מסמך",
-  file: "קובץ",
-  game: "משחק",
-  link: "קישור",
+  doc: "מערך שיעור",
+  file: "להדפסה",
+  game: "פעילות",
 };
+function typeOf(item: { kind: string; contentType?: string | null }): string {
+  return item.contentType ?? KIND_TO_TYPE[item.kind] ?? "אחר";
+}
 
 function extractUrls(text: string): string[] {
   return text
@@ -217,8 +232,8 @@ function itemTags(item: Item): string[] {
   return [...(item.meta.classes ?? []).slice(0, 3).map((c) => `כיתה ${c}`), ...(item.meta.subjects ?? []).slice(0, 2)];
 }
 
-function Thumb({ item, size }: { item: Pick<Item, "imageUrl" | "kind">; size: number }) {
-  const Icon = KIND_ICON[item.kind] ?? Link2;
+function Thumb({ item, size }: { item: { imageUrl: string | null; kind: string; contentType?: string | null }; size: number }) {
+  const Icon = TYPE_ICON[typeOf(item)] ?? FileGeneric;
   return (
     <div className="shrink-0 rounded-lg overflow-hidden bg-blue-soft" style={{ width: size, height: size }}>
       {item.imageUrl ? (
@@ -241,16 +256,19 @@ function ItemRow({
   onChange,
   onDelete,
   onPublish,
+  onType,
 }: {
   li: LessonItem;
   expanded: boolean;
   onChange: (patch: ItemPatch) => void;
   onDelete: () => void;
   onPublish: () => void;
+  onType: (type: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
-  const KindIcon = KIND_ICON[li.item.kind] ?? Link2;
+  const itemType = typeOf(li.item);
+  const TypeIcon = TYPE_ICON[itemType] ?? FileGeneric;
   const phase = PHASES.find((p) => p.name === li.phase);
   const PhaseIcon = phase?.icon;
   const duration = DURATIONS.find((d) => d.key === li.duration);
@@ -294,14 +312,32 @@ function ItemRow({
               <PhaseIcon size={15} strokeWidth={2} />
             </span>
           )}
-          <span data-tip={KIND_LABEL[li.item.kind] ?? "קישור"}>
-            <KindIcon size={15} strokeWidth={2} />
+          <span className="text-ink" data-tip={itemType}>
+            <TypeIcon size={15} strokeWidth={2} />
           </span>
         </div>
       </div>
 
       {expanded && (
         <div className="px-2.5 pb-2.5 pt-1 flex flex-col gap-2" onPointerDown={stop}>
+          <div className="flex flex-wrap items-center gap-1">
+            {CONTENT_TYPES.map((t) => (
+              <button
+                key={t.name}
+                className={`btn-icon !p-1.5 ${itemType === t.name ? "!bg-ink !text-white" : ""}`}
+                data-tip={t.name}
+                aria-label={`סוג: ${t.name}`}
+                aria-pressed={itemType === t.name}
+                onClick={() => onType(t.name)}
+              >
+                <t.icon size={16} strokeWidth={2} />
+              </button>
+            ))}
+            <span className="ms-auto inline-flex items-center gap-1 rounded-full bg-page px-2.5 py-0.5 text-[0.7rem] text-muted" data-tip="מאיפה הפריט">
+              {li.item.kind === "openstuff" ? <OpenstuffMark size={12} /> : <Link2 size={12} strokeWidth={2} />}
+              {li.item.kind === "openstuff" ? "חומר פתוח" : (li.item.siteName ?? "קישור חיצוני")}
+            </span>
+          </div>
           <div className="flex flex-wrap items-center gap-1">
             {PHASES.map((p) => (
               <button
@@ -342,7 +378,7 @@ function ItemRow({
             <span className="text-muted me-1" data-tip="כמה זמן">
               <Clock size={14} strokeWidth={2} />
             </span>
-            {DURATIONS.map((d) => (
+            {LESSON_DURATIONS.map((d) => (
               <button
                 key={d.key}
                 className={`btn-icon !p-1.5 ${li.duration === d.key ? "!bg-orange/10 !text-orange" : ""}`}
@@ -443,6 +479,7 @@ function LessonColumn({
   onItemChange,
   onItemDelete,
   onPublish,
+  onItemType,
 }: {
   lesson: Lesson;
   index: number;
@@ -459,6 +496,7 @@ function LessonColumn({
   onItemChange: (id: number, patch: ItemPatch) => void;
   onItemDelete: (id: number) => void;
   onPublish: (li: LessonItem) => void;
+  onItemType: (itemId: number, type: string) => void;
 }) {
   // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
@@ -536,6 +574,7 @@ function LessonColumn({
               onChange={(p) => onItemChange(li.id, p)}
               onDelete={() => onItemDelete(li.id)}
               onPublish={() => onPublish(li)}
+              onType={(type) => onItemType(li.itemId, type)}
             />
           ))}
         </div>
@@ -565,7 +604,7 @@ function WhDraggable({ card, used }: { card: WhCard; used: boolean }) {
         isDragging ? "opacity-40" : ""
       }`}
     >
-      <Thumb item={{ imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link" }} size={44} />
+      <Thumb item={{ imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link", contentType: card.contentType }} size={44} />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium leading-snug line-clamp-2">{card.title}</p>
         {card.tags.length > 0 && <p className="text-[0.7rem] text-muted mt-0.5 truncate">{card.tags.join(" · ")}</p>}
@@ -626,7 +665,7 @@ function Warehouse({
         if (all) params.set("all", "1");
         const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as {
           total: number;
-          cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; classes: string[]; subjects: string[] }>;
+          cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; classes: string[]; subjects: string[]; category: string | null }>;
         };
         const cards: WhCard[] = data.cards.map((c) => ({
           kind: "os",
@@ -634,6 +673,7 @@ function Warehouse({
           url: c.url,
           title: c.title,
           imageUrl: c.imageUrl,
+          contentType: c.category,
           tags: [...c.classes.slice(0, 3).map((x) => `כיתה ${x}`), ...c.subjects.slice(0, 1)],
         }));
         setOsCards((prev) => (page === 1 ? cards : [...prev, ...cards.filter((c) => !prev.some((p) => p.key === c.key))]));
@@ -659,6 +699,7 @@ function Warehouse({
             url: i.url,
             title: i.title,
             imageUrl: i.imageUrl,
+            contentType: i.contentType,
             tags: itemTags(i),
             placed: i.placed,
           })),
@@ -805,12 +846,14 @@ function CrossCard({
   currentTopicId,
   onRemove,
   onToggleScope,
+  onToggleUnit,
 }: {
   c: CrossItem;
   topicColor: string;
   currentTopicId: number | null;
   onRemove: (id: number) => void;
   onToggleScope: (c: CrossItem) => void;
+  onToggleUnit: (c: CrossItem) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `cr-${c.id}` });
   return (
@@ -824,6 +867,15 @@ function CrossCard({
       <a href={c.item.url} target="_blank" rel="noreferrer" draggable={false} className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
         {c.item.title}
       </a>
+      <button
+        className={`btn-icon ${c.duration === "unit" ? "!bg-orange/10 !text-orange" : ""}`}
+        data-tip={c.duration === "unit" ? "יחידה ארוכה, נפרשת על כמה מפגשים. לחצו לביטול" : "סימון כיחידה ארוכה (נפרשת על כמה מפגשים)"}
+        aria-label="יחידה ארוכה"
+        aria-pressed={c.duration === "unit"}
+        onClick={() => onToggleUnit(c)}
+      >
+        <DurationIcon kind="unit" size={16} />
+      </button>
       <button
         className="btn-icon"
         data-tip={c.topicId === null ? "חל על כל הנושאים. לחצו לשיוך לנושא הנוכחי" : "משויך לנושא. לחצו להחלה על כל הנושאים"}
@@ -852,6 +904,7 @@ function CrossSection({
   onAddUrls,
   onRemove,
   onToggleScope,
+  onToggleUnit,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -864,6 +917,7 @@ function CrossSection({
   onAddUrls: (urls: string[]) => void;
   onRemove: (id: number) => void;
   onToggleScope: (c: CrossItem) => void;
+  onToggleUnit: (c: CrossItem) => void;
 }) {
   const { setNodeRef } = useDroppable({ id: "cross-zone" });
   return (
@@ -885,7 +939,15 @@ function CrossSection({
       {open && (
         <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((c) => (
-            <CrossCard key={c.id} c={c} topicColor={topicColor} currentTopicId={currentTopicId} onRemove={onRemove} onToggleScope={onToggleScope} />
+            <CrossCard
+              key={c.id}
+              c={c}
+              topicColor={topicColor}
+              currentTopicId={currentTopicId}
+              onRemove={onRemove}
+              onToggleScope={onToggleScope}
+              onToggleUnit={onToggleUnit}
+            />
           ))}
           <PasteZone onUrls={onAddUrls} busy={busy} compact />
         </div>
@@ -1183,6 +1245,28 @@ export default function Board({ groupId }: { groupId: number }) {
     }
   }
 
+  // סוג התוכן שייך לפריט עצמו, ולכן מתעדכן בכל מקום שבו הוא מופיע (שיעורים וקישורים כלליים).
+  async function itemType(itemId: number, type: string) {
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            lessons: prev.lessons.map((l) => ({
+              ...l,
+              items: l.items.map((x) => (x.item.id === itemId ? { ...x, item: { ...x.item, contentType: type } } : x)),
+            })),
+            crossItems: prev.crossItems.map((c) => (c.item.id === itemId ? { ...c, item: { ...c.item, contentType: type } } : c)),
+          }
+        : prev,
+    );
+    try {
+      await api(`/api/items/${itemId}`, "PATCH", { contentType: type });
+    } catch {
+      setError("השמירה נכשלה");
+      await load();
+    }
+  }
+
   async function itemDelete(id: number) {
     try {
       await api(`/api/lesson-items/${id}`, "DELETE");
@@ -1251,6 +1335,11 @@ export default function Board({ groupId }: { groupId: number }) {
 
   async function toggleCrossScope(c: CrossItem) {
     await api(`/api/cross/${c.id}`, "PATCH", { topicId: c.topicId === null ? currentTopicId : null }).catch(() => setError("השמירה נכשלה"));
+    await load();
+  }
+
+  async function toggleCrossUnit(c: CrossItem) {
+    await api(`/api/cross/${c.id}`, "PATCH", { duration: c.duration === "unit" ? null : "unit" }).catch(() => setError("השמירה נכשלה"));
     await load();
   }
 
@@ -1403,6 +1492,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onItemChange={itemChange}
                       onItemDelete={itemDelete}
                       onPublish={setPublishFor}
+                      onItemType={itemType}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>
@@ -1424,6 +1514,7 @@ export default function Board({ groupId }: { groupId: number }) {
               onAddUrls={addCross}
               onRemove={removeCross}
               onToggleScope={toggleCrossScope}
+              onToggleUnit={toggleCrossUnit}
             />
           </div>
 

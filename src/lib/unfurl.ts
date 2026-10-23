@@ -9,9 +9,29 @@ export type Unfurled = {
   imageUrl: string | null;
   siteName: string | null;
   kind: ItemKind;
+  contentType: string;
   openstuffPostId: number | null;
   meta: { classes?: string[]; subjects?: string[]; author?: string };
 };
+
+// הקטגוריות של חומר פתוח. סוג תוכן הוא תמיד אחת מהן.
+export const CONTENT_TYPES = ["סרטון", "מצגת", "להדפסה", "מערך שיעור", "פעילות", "כלי דיגיטלי", "תבנית", "אחר"] as const;
+
+// ניחוש לקישור חיצוני לפי סוג הקישור; המורה יכולה לתקן.
+const KIND_TO_TYPE: Record<ItemKind, string> = {
+  openstuff: "אחר",
+  youtube: "סרטון",
+  video: "סרטון",
+  slides: "מצגת",
+  doc: "מערך שיעור",
+  file: "להדפסה",
+  game: "פעילות",
+  link: "אחר",
+};
+
+export function guessContentType(kind: ItemKind): string {
+  return KIND_TO_TYPE[kind] ?? "אחר";
+}
 
 const OPENSTUFF_HOSTS = new Set(["openstuff.co.il", "www.openstuff.co.il"]);
 
@@ -82,10 +102,13 @@ async function unfurlOpenstuff(u: URL): Promise<Partial<Unfurled> | null> {
     };
   };
   const terms = (post._embedded?.["wp:term"] ?? []).flat();
+  // סוג התוכן הוא הקטגוריה של הפוסט עצמו (הראשונה שמוכרת לנו).
+  const category = terms.find((t) => t.taxonomy === "category" && (CONTENT_TYPES as readonly string[]).includes(t.name))?.name;
   return {
     title: decodeHtml(post.title?.rendered ?? ""),
     imageUrl: post._embedded?.["wp:featuredmedia"]?.[0]?.source_url ?? null,
     siteName: "חומר פתוח",
+    contentType: category ?? "אחר",
     openstuffPostId: id,
     meta: {
       classes: terms.filter((t) => t.taxonomy === "class").map((t) => t.name),
@@ -129,6 +152,7 @@ export async function unfurl(rawUrl: string): Promise<Unfurled | null> {
     imageUrl: null,
     siteName: null,
     kind,
+    contentType: guessContentType(kind),
     openstuffPostId: null,
     meta: {},
   };

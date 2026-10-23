@@ -5,6 +5,7 @@ import { numId, readJson, withTeacher } from "@/lib/http";
 const schema = z.object({
   topicId: z.number().int().positive().nullable().optional(),
   note: z.string().max(2000).optional(),
+  duration: z.enum(["unit"]).nullable().optional(),
 });
 
 export async function PATCH(req: Request, ctx: RouteContext<"/api/cross/[id]">) {

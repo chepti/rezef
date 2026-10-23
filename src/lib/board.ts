@@ -406,6 +406,7 @@ async function insertItems(teacherId: number, unfurled: Awaited<ReturnType<typeo
         imageUrl: u.imageUrl,
         siteName: u.siteName,
         kind: u.kind,
+        contentType: u.contentType,
         openstuffPostId: u.openstuffPostId,
         meta: u.meta as Record<string, unknown>,
       })),
@@ -460,6 +461,16 @@ export async function addExistingItem(lessonId: number, teacherId: number, itemI
   const [item] = await db.select({ id: items.id, teacherId: items.teacherId }).from(items).where(eq(items.id, itemId)).limit(1);
   if (!item || item.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
   return attachItems(lessonId, [itemId], index);
+}
+
+// תיקון סוג התוכן של פריט (למשל כשהניחוש לקישור חיצוני שגוי). חל על הפריט בכל השיעורים.
+export async function updateItem(id: number, teacherId: number, patch: { contentType?: string }) {
+  const db = await getDb();
+  const [item] = await db.select({ id: items.id, teacherId: items.teacherId }).from(items).where(eq(items.id, id)).limit(1);
+  if (!item || item.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
+  if (patch.contentType !== undefined) {
+    await db.update(items).set({ contentType: patch.contentType }).where(eq(items.id, id));
+  }
 }
 
 // הדבקה למחסן: יוצר פריטים בלי לתלות אותם בשיעור.
@@ -554,7 +565,11 @@ export async function lessonItemToCross(lessonItemId: number, teacherId: number,
   });
 }
 
-export async function updateCross(id: number, teacherId: number, patch: { topicId?: number | null; note?: string }) {
+export async function updateCross(
+  id: number,
+  teacherId: number,
+  patch: { topicId?: number | null; note?: string; duration?: string | null },
+) {
   const db = await getDb();
   const [row] = await db
     .select({ ci: crossItems, group: groups })
@@ -570,6 +585,7 @@ export async function updateCross(id: number, teacherId: number, patch: { topicI
     set.topicId = patch.topicId;
   }
   if (patch.note !== undefined) set.note = patch.note.slice(0, 2000);
+  if (patch.duration !== undefined) set.duration = patch.duration;
   if (Object.keys(set).length > 0) await db.update(crossItems).set(set).where(eq(crossItems.id, id));
 }
 

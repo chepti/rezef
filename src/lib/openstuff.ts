@@ -34,6 +34,7 @@ export type WarehouseCard = {
   imageUrl: string | null;
   classes: string[];
   subjects: string[];
+  category: string | null;
 };
 
 type WpPost = {
@@ -91,6 +92,7 @@ export async function searchOpenstuff(opts: {
         imageUrl: p._embedded?.["wp:featuredmedia"]?.[0]?.source_url ?? null,
         classes: terms.filter((t) => t.taxonomy === "class").map((t) => t.name),
         subjects: terms.filter((t) => t.taxonomy === "subject").map((t) => t.name),
+        category: terms.find((t) => t.taxonomy === "category")?.name ?? null,
       };
     }),
   };

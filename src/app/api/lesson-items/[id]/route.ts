@@ -8,7 +8,7 @@ const schema = z.object({
   level: z.enum(["base", "mid", "advanced"]).nullable().optional(),
   isAssignment: z.boolean().optional(),
   shareNote: z.boolean().optional(),
-  duration: z.enum(["quarter", "half", "lesson", "double", "unit"]).nullable().optional(),
+  duration: z.enum(["five", "quarter", "half", "lesson", "double"]).nullable().optional(),
   move: z.object({ lessonId: z.number().int().positive(), index: z.number().int().min(0) }).optional(),
 });
 

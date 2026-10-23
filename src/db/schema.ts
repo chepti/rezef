@@ -74,6 +74,10 @@ export const lessons = pgTable("lessons", {
   topicId: integer("topic_id").references(() => topics.id),
   position: integer("position").notNull(),
   title: text("title").notNull(),
+  // כשהשיעור פורסם כאוסף בחומר פתוח: מזהה האוסף וכתובתו. פרסום חוזר מעדכן את אותו אוסף.
+  publishedCollectionId: integer("published_collection_id"),
+  publishedCollectionUrl: text("published_collection_url"),
+  publishedAt: timestamp("published_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -89,6 +93,9 @@ export const items = pgTable("items", {
   siteName: text("site_name"),
   // openstuff | youtube | video | slides | doc | file | game | link
   kind: text("kind").notNull().default("link"),
+  // סוג התוכן, באותן קטגוריות של חומר פתוח: סרטון, מצגת, להדפסה, מערך שיעור, פעילות, כלי דיגיטלי, תבנית, אחר.
+  // מפוסט של חומר פתוח נגזר מהקטגוריה שלו; לקישור חיצוני מנוחש לפי הסוג, והמורה יכולה לשנות.
+  contentType: text("content_type"),
   openstuffPostId: integer("openstuff_post_id"),
   // תיוג שנשלף אוטומטית: { classes: string[], subjects: string[], author: string }
   meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
@@ -134,6 +141,8 @@ export const crossItems = pgTable("cross_items", {
   note: text("note").notNull().default(""),
   // שיוך לנושא. ריק = חל על כל הנושאים.
   topicId: integer("topic_id").references(() => topics.id, { onDelete: "set null" }),
+  // "unit" = יחידה ארוכה (נפרסת על כמה מפגשים). מתאים לקישורים כלליים בלבד, לא לפריט בשיעור.
+  duration: text("duration"),
   // none | weekly | monthly: תזכורת חזרה בלבד, בלי לוגיקת תזמון בשלב 1.
   repeat: text("repeat").notNull().default("none"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

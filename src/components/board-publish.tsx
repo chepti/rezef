@@ -12,6 +12,7 @@ export type PublishItem = {
   url: string;
   imageUrl: string | null;
   kind: string;
+  contentType?: string | null;
   siteName: string | null;
 };
 
@@ -51,7 +52,7 @@ export default function PublishDialog({
 }) {
   const [title, setTitle] = useState(item.title);
   const [intro, setIntro] = useState(note);
-  const [category, setCategory] = useState(KIND_CATEGORY[item.kind] ?? "אחר");
+  const [category, setCategory] = useState(item.contentType ?? KIND_CATEGORY[item.kind] ?? "אחר");
   const [classes, setClasses] = useState<string[]>(context.className ? [context.className] : []);
   const [subject, setSubject] = useState(context.subjectName ?? "");
   const [tags, setTags] = useState<string[]>(context.tags);
