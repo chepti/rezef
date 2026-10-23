@@ -671,6 +671,8 @@ function Warehouse({
 
   useEffect(() => {
     if (tab !== "os") return;
+    // תשובה של חיפוש ישן לא רשאית לדרוס חיפוש חדש (זה מה שהחליף את התוצאות אחרי כמה שניות).
+    let stale = false;
     const handle = setTimeout(async () => {
       setOsLoading(true);
       setOsError("");
@@ -681,6 +683,7 @@ function Warehouse({
           total: number;
           cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; classes: string[]; subjects: string[]; category: string | null }>;
         };
+        if (stale) return;
         const cards: WhCard[] = data.cards.map((c) => ({
           kind: "os",
           key: `wh-os-${c.id}`,
@@ -693,12 +696,15 @@ function Warehouse({
         setOsCards((prev) => (page === 1 ? cards : [...prev, ...cards.filter((c) => !prev.some((p) => p.key === c.key))]));
         setOsTotal(data.total);
       } catch (e) {
-        setOsError(e instanceof Error ? e.message : "שגיאה");
+        if (!stale) setOsError(e instanceof Error ? e.message : "שגיאה");
       } finally {
-        setOsLoading(false);
+        if (!stale) setOsLoading(false);
       }
     }, q ? 350 : 0);
-    return () => clearTimeout(handle);
+    return () => {
+      stale = true;
+      clearTimeout(handle);
+    };
   }, [tab, q, all, page, groupId]);
 
   useEffect(() => {
@@ -809,7 +815,7 @@ function Warehouse({
       <div className="overflow-y-auto px-3.5 pb-3.5 flex flex-col gap-1.5">
         {tab === "os" ? (
           <>
-            {osCards.map((c) => (
+            {[...osCards.filter((c) => !usedUrls.has(c.url)), ...osCards.filter((c) => usedUrls.has(c.url))].map((c) => (
               <WhDraggable key={c.key} card={c} used={usedUrls.has(c.url)} />
             ))}
             {osError && <p className="text-coral text-sm">{osError}</p>}
@@ -838,7 +844,7 @@ function Warehouse({
           </>
         ) : (
           <>
-            {mine.map((c) => (
+            {[...mine.filter((c) => !(c.kind === "item" && c.placed > 0)), ...mine.filter((c) => c.kind === "item" && c.placed > 0)].map((c) => (
               <WhDraggable key={c.key} card={c} used={c.kind === "item" && c.placed > 0} />
             ))}
             {mine.length === 0 && <p className="text-muted text-sm text-center py-6">הדביקו קישורים כדי לצבור כאן פריטים</p>}
