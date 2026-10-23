@@ -22,6 +22,7 @@ import TopicBar, { type Topic } from "./board-topics";
 import Rope from "./board-rope";
 import PublishDialog, { type Terms } from "./board-publish";
 import PublishLessonDialog from "./board-publish-lesson";
+import PreviewDialog from "./board-preview";
 import GroupSettings from "./board-settings";
 import {
   Check,
@@ -31,6 +32,7 @@ import {
   Clock,
   Copy,
   GripVertical,
+  Info,
   Layers,
   Dumbbell,
   File as FileGeneric,
@@ -91,7 +93,7 @@ type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "d
 
 // מה שנגרר מהמחסן: קישור מחומר פתוח (ייווצר פריט) או פריט קיים של המורה.
 type WhCard =
-  | { kind: "os"; key: string; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[] }
+  | { kind: "os"; key: string; postId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[] }
   | { kind: "item"; key: string; itemId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[]; placed: number };
 
 const PHASES = [
@@ -607,7 +609,7 @@ function LessonColumn({
 
 /* ---------- מחסן ---------- */
 
-function WhDraggable({ card, used }: { card: WhCard; used: boolean }) {
+function WhDraggable({ card, used, onPreview }: { card: WhCard; used: boolean; onPreview?: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.key, data: { card } });
   return (
     <div
@@ -627,6 +629,18 @@ function WhDraggable({ card, used }: { card: WhCard; used: boolean }) {
         <span className="text-green-600 shrink-0" data-tip="כבר ברצף">
           <Check size={16} strokeWidth={2} />
         </span>
+      )}
+      {onPreview && (
+        <button
+          type="button"
+          className="btn-icon !p-1.5 shrink-0"
+          data-tip="תצוגה מקדימה"
+          aria-label="תצוגה מקדימה"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={onPreview}
+        >
+          <Info size={16} strokeWidth={2} />
+        </button>
       )}
     </div>
   );
@@ -663,6 +677,7 @@ function Warehouse({
   const [osError, setOsError] = useState("");
   const [mine, setMine] = useState<WhCard[]>([]);
   const [pasteBusy, setPasteBusy] = useState(false);
+  const [preview, setPreview] = useState<{ postId: number; title: string } | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -687,6 +702,7 @@ function Warehouse({
         const cards: WhCard[] = data.cards.map((c) => ({
           kind: "os",
           key: `wh-os-${c.id}`,
+          postId: c.id,
           url: c.url,
           title: c.title,
           imageUrl: c.imageUrl,
@@ -816,7 +832,12 @@ function Warehouse({
         {tab === "os" ? (
           <>
             {[...osCards.filter((c) => !usedUrls.has(c.url)), ...osCards.filter((c) => usedUrls.has(c.url))].map((c) => (
-              <WhDraggable key={c.key} card={c} used={usedUrls.has(c.url)} />
+              <WhDraggable
+                key={c.key}
+                card={c}
+                used={usedUrls.has(c.url)}
+                onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined}
+              />
             ))}
             {osError && <p className="text-coral text-sm">{osError}</p>}
             {osLoading && <p className="text-muted text-sm text-center py-2">טוענים…</p>}
@@ -851,6 +872,7 @@ function Warehouse({
           </>
         )}
       </div>
+      {preview && <PreviewDialog postId={preview.postId} fallbackTitle={preview.title} onClose={() => setPreview(null)} />}
     </aside>
   );
 }
