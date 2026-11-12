@@ -495,7 +495,25 @@ export async function listTeacherItems(teacherId: number) {
 
 export async function groupContext(groupId: number, teacherId: number) {
   const group = await ownedGroup(groupId, teacherId);
-  return { className: group.className, subjectName: group.subjectName };
+  return { id: group.id, className: group.className, subjectName: group.subjectName };
+}
+
+// פוסטים של חומר פתוח שכבר נמצאים ברצף של הקבוצה (בשיעורים ובקישורים הכלליים): החיפוש במאגר מדלג עליהם.
+export async function usedPostIds(groupId: number): Promise<number[]> {
+  const db = await getDb();
+  const sequence = await sequenceOf(groupId);
+  const inLessons = await db
+    .select({ postId: items.openstuffPostId })
+    .from(lessonItems)
+    .innerJoin(items, eq(items.id, lessonItems.itemId))
+    .innerJoin(lessons, eq(lessons.id, lessonItems.lessonId))
+    .where(eq(lessons.sequenceId, sequence.id));
+  const inCross = await db
+    .select({ postId: items.openstuffPostId })
+    .from(crossItems)
+    .innerJoin(items, eq(items.id, crossItems.itemId))
+    .where(eq(crossItems.sequenceId, sequence.id));
+  return [...new Set([...inLessons, ...inCross].map((r) => r.postId).filter((id): id is number => id != null))];
 }
 
 // topicId: מספר = משויך לנושא; null = חל על כל הנושאים; undefined = הנושא הפתוח כעת.

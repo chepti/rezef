@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { groupContext } from "@/lib/board";
+import { groupContext, usedPostIds } from "@/lib/board";
 import { HttpError } from "@/lib/session";
 import { numId, withTeacher } from "@/lib/http";
 import { searchOpenstuff } from "@/lib/openstuff";
@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
         className: sp.get("all") === "1" ? null : ctx.className,
         subjectName: sp.get("all") === "1" ? null : ctx.subjectName,
         page,
+        exclude: await usedPostIds(ctx.id),
       });
     } catch {
       throw new HttpError(502, "חומר פתוח לא ענה כרגע");

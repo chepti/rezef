@@ -144,3 +144,30 @@ body {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* פריטי המאגר ("פרפרים"): היסט וסיבוב קלים, ריחוף עדין ושקיפות לפי הדירוג. ריחוף עכבר מבליט ועוצר את התנועה. */
+.fly {
+  opacity: var(--fly-o, 1);
+  transform: translateY(var(--fly-y, 0)) rotate(var(--fly-r, 0));
+  animation: fly-float 7s ease-in-out infinite;
+  transition: opacity 0.15s;
+}
+.fly:hover {
+  opacity: 1;
+  animation-play-state: paused;
+  z-index: 5;
+}
+@keyframes fly-float {
+  0%,
+  100% {
+    transform: translateY(var(--fly-y, 0)) rotate(var(--fly-r, 0));
+  }
+  50% {
+    transform: translateY(calc(var(--fly-y, 0) - 7px)) rotate(calc(var(--fly-r, 0) * -0.6));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fly {
+    animation: none;
+  }
+}

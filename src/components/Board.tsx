@@ -23,6 +23,7 @@ import Rope from "./board-rope";
 import PublishDialog, { type Terms } from "./board-publish";
 import PublishLessonDialog from "./board-publish-lesson";
 import PreviewDialog from "./board-preview";
+import LessonMode from "./board-lesson-mode";
 import GroupSettings from "./board-settings";
 import {
   Check,
@@ -42,8 +43,7 @@ import {
   Lightbulb,
   Library,
   Link2,
-  PanelLeftClose,
-  PanelLeftOpen,
+  MonitorPlay,
   Pin,
   Plus,
   Presentation,
@@ -67,6 +67,7 @@ type Item = {
   kind: string;
   contentType: string | null;
   publishedPostId: number | null;
+  openstuffPostId: number | null;
   meta: { classes?: string[]; subjects?: string[]; author?: string };
 };
 type LessonItem = {
@@ -484,6 +485,7 @@ function LessonColumn({
   onPublish,
   onItemType,
   onPublishLesson,
+  onPresent,
 }: {
   lesson: Lesson;
   index: number;
@@ -502,6 +504,7 @@ function LessonColumn({
   onPublish: (li: LessonItem) => void;
   onItemType: (itemId: number, type: string) => void;
   onPublishLesson: () => void;
+  onPresent: () => void;
 }) {
   // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
@@ -570,6 +573,17 @@ function LessonColumn({
         {lesson.items.length > 0 && (
           <button
             type="button"
+            className="btn-icon shrink-0 !p-1.5"
+            data-tip="מצב שיעור: הצגה בכיתה במסך מלא"
+            aria-label="מצב שיעור"
+            onClick={onPresent}
+          >
+            <MonitorPlay size={16} strokeWidth={2} />
+          </button>
+        )}
+        {lesson.items.length > 0 && (
+          <button
+            type="button"
             className={`btn-icon shrink-0 !p-1.5 ${lesson.publishedCollectionUrl ? "!text-green-600" : ""}`}
             data-tip={lesson.publishedCollectionUrl ? "פורסם כאוסף. לחצו לעדכון" : "פרסום השיעור כאוסף בחומר פתוח"}
             aria-label="פרסום השיעור כאוסף"
@@ -607,44 +621,90 @@ function LessonColumn({
   );
 }
 
-/* ---------- מחסן ---------- */
+/* ---------- המאגר: פריטים מרחפים ("פרפרים") לכל רוחב המסך ---------- */
 
-function WhDraggable({ card, used, onPreview }: { card: WhCard; used: boolean; onPreview?: () => void }) {
+// היסט וסיבוב קלים לפי המיקום, כדי שהפריטים ייראו מרחפים ולא מסודרים בטבלה.
+const FLY_SHIFT = [0, 12, -6, 16, 4, -10, 8];
+const FLY_TILT = [-1.4, 1, -0.6, 1.8, -1.8, 0.6, 1.2];
+
+function Butterfly({ card, rank, onPreview }: { card: WhCard; rank: number; onPreview?: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.key, data: { card } });
+  const type = typeOf({ kind: card.kind === "os" ? "openstuff" : "link", contentType: card.contentType });
+  const TypeIcon = TYPE_ICON[type] ?? FileGeneric;
+  // הפופולריים למעלה ומלאים; ככל שיורדים, הפריט שקוף יותר (עד חצי). ריחוף מחזיר אותו למלא.
+  const fade = Math.max(0.5, 1 - rank * 0.014);
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-2.5 bg-white border border-line rounded-xl p-2 cursor-grab touch-none hover:border-blue transition ${
-        isDragging ? "opacity-40" : ""
-      }`}
+      className={`fly group/fly relative w-[10.5rem] shrink-0 cursor-grab touch-none ${isDragging ? "!opacity-30" : ""}`}
+      style={
+        {
+          "--fly-y": `${FLY_SHIFT[rank % FLY_SHIFT.length]}px`,
+          "--fly-r": `${FLY_TILT[rank % FLY_TILT.length]}deg`,
+          "--fly-o": fade,
+          animationDelay: `${(rank % 7) * -0.9}s`,
+        } as React.CSSProperties
+      }
     >
-      <Thumb item={{ imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link", contentType: card.contentType }} size={44} />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium leading-snug line-clamp-2">{card.title}</p>
-        {card.tags.length > 0 && <p className="text-[0.7rem] text-muted mt-0.5 truncate">{card.tags.join(" · ")}</p>}
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm transition group-hover/fly:border-blue group-hover/fly:shadow-lg">
+        <div className="relative aspect-[16/10] bg-blue-soft">
+          {card.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={card.imageUrl} alt="" draggable={false} loading="lazy" className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-blue">
+              <TypeIcon size={34} strokeWidth={2} />
+            </div>
+          )}
+        </div>
+        <div className="p-2 pt-2.5">
+          <p className="text-[0.8rem] font-medium leading-snug line-clamp-2">{card.title}</p>
+          {card.tags.length > 0 && <p className="mt-0.5 truncate text-[0.65rem] text-muted">{card.tags.join(" · ")}</p>}
+        </div>
       </div>
-      {used && (
-        <span className="text-green-600 shrink-0" data-tip="כבר ברצף">
-          <Check size={16} strokeWidth={2} />
+      {/* data-tip קובע position: relative, ולכן המיקום המוחלט יושב על עטיפה נפרדת. */}
+      <span className="absolute -top-2.5 -start-2.5">
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-ink text-white shadow-md ring-2 ring-white" data-tip={type}>
+          <TypeIcon size={18} strokeWidth={2} />
         </span>
-      )}
+      </span>
       {onPreview && (
+        <span className="absolute top-1.5 end-1.5 opacity-0 transition focus-within:opacity-100 group-hover/fly:opacity-100">
         <button
           type="button"
-          className="btn-icon !p-1.5 shrink-0"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-ink shadow hover:bg-white hover:text-blue-dark"
           data-tip="תצוגה מקדימה"
           aria-label="תצוגה מקדימה"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onPreview}
         >
-          <Info size={16} strokeWidth={2} />
+          <Info size={15} strokeWidth={2} />
         </button>
+        </span>
       )}
     </div>
   );
 }
+
+type OsResponse = {
+  total: number;
+  cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; classes: string[]; subjects: string[]; category: string | null }>;
+};
+function toOsCards(data: OsResponse): WhCard[] {
+  return data.cards.map((c) => ({
+    kind: "os",
+    key: `wh-os-${c.id}`,
+    postId: c.id,
+    url: c.url,
+    title: c.title,
+    imageUrl: c.imageUrl,
+    contentType: c.category,
+    tags: [...c.classes.slice(0, 3).map((x) => `כיתה ${x}`), ...c.subjects.slice(0, 1)],
+  }));
+}
+const mergeCards = (prev: WhCard[], next: WhCard[]) => [...prev, ...next.filter((c) => !prev.some((p) => p.key === c.key))];
 
 function Warehouse({
   groupId,
@@ -652,7 +712,6 @@ function Warehouse({
   refreshKey,
   autoQuery,
   autoKey,
-  onClose,
   onItemsChanged,
 }: {
   groupId: number;
@@ -660,7 +719,6 @@ function Warehouse({
   refreshKey: number;
   autoQuery: string;
   autoKey: number | null;
-  onClose: () => void;
   onItemsChanged: () => void;
 }) {
   const [tab, setTab] = useState<"os" | "mine">("os");
@@ -670,23 +728,34 @@ function Warehouse({
   const autoActive = autoQuery !== "" && autoOff !== autoKey && manualQ.trim() === "";
   const q = manualQ.trim() || (autoActive ? autoQuery : "");
   const [all, setAll] = useState(false);
+  const searchKey = `${q}|${all}`;
   const [page, setPage] = useState(1);
   const [osCards, setOsCards] = useState<WhCard[]>([]);
   const [osTotal, setOsTotal] = useState(0);
+  const [loadedKey, setLoadedKey] = useState("");
   const [osLoading, setOsLoading] = useState(false);
   const [osError, setOsError] = useState("");
+  // כשהחיפוש לפי שם השיעור נגמר, ממשיכים עם שאר הפריטים של הכיתה והתחום (בלי מילת החיפוש).
+  const [morePage, setMorePage] = useState(1);
+  const [moreCards, setMoreCards] = useState<WhCard[]>([]);
+  const [moreTotal, setMoreTotal] = useState(0);
+  const [moreLoading, setMoreLoading] = useState(false);
   const [mine, setMine] = useState<WhCard[]>([]);
   const [pasteBusy, setPasteBusy] = useState(false);
   const [preview, setPreview] = useState<{ postId: number; title: string } | null>(null);
+  const sentinel = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [q, all]);
+    setMorePage(1);
+    setMoreCards([]);
+    setMoreTotal(0);
+  }, [searchKey]);
 
   useEffect(() => {
     if (tab !== "os") return;
-    // תשובה של חיפוש ישן לא רשאית לדרוס חיפוש חדש (זה מה שהחליף את התוצאות אחרי כמה שניות).
+    // תשובה של חיפוש ישן לא רשאית לדרוס חיפוש חדש.
     let stale = false;
     const handle = setTimeout(async () => {
       setOsLoading(true);
@@ -694,23 +763,12 @@ function Warehouse({
       try {
         const params = new URLSearchParams({ group: String(groupId), q, page: String(page) });
         if (all) params.set("all", "1");
-        const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as {
-          total: number;
-          cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; classes: string[]; subjects: string[]; category: string | null }>;
-        };
+        const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
         if (stale) return;
-        const cards: WhCard[] = data.cards.map((c) => ({
-          kind: "os",
-          key: `wh-os-${c.id}`,
-          postId: c.id,
-          url: c.url,
-          title: c.title,
-          imageUrl: c.imageUrl,
-          contentType: c.category,
-          tags: [...c.classes.slice(0, 3).map((x) => `כיתה ${x}`), ...c.subjects.slice(0, 1)],
-        }));
-        setOsCards((prev) => (page === 1 ? cards : [...prev, ...cards.filter((c) => !prev.some((p) => p.key === c.key))]));
+        const cards = toOsCards(data);
+        setOsCards((prev) => (page === 1 ? cards : mergeCards(prev, cards)));
         setOsTotal(data.total);
+        setLoadedKey(`${q}|${all}`);
       } catch (e) {
         if (!stale) setOsError(e instanceof Error ? e.message : "שגיאה");
       } finally {
@@ -721,7 +779,35 @@ function Warehouse({
       stale = true;
       clearTimeout(handle);
     };
-  }, [tab, q, all, page, groupId]);
+    // refreshKey: אחרי הוספה או הסרה של פריט ברצף, הרשימה נטענת מחדש בלי הפריטים שכבר בו.
+  }, [tab, q, all, page, groupId, refreshKey]);
+
+  const primaryDone = loadedKey === searchKey && !osLoading && osCards.length >= osTotal;
+  const wantMore = tab === "os" && autoActive && primaryDone;
+
+  useEffect(() => {
+    if (!wantMore) return;
+    let stale = false;
+    (async () => {
+      setMoreLoading(true);
+      try {
+        const params = new URLSearchParams({ group: String(groupId), q: "", page: String(morePage) });
+        if (all) params.set("all", "1");
+        const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
+        if (stale) return;
+        const cards = toOsCards(data);
+        setMoreCards((prev) => (morePage === 1 ? cards : mergeCards(prev, cards)));
+        setMoreTotal(data.total);
+      } catch {
+        // ההמשך הוא תוספת בלבד; כשל כאן לא מסתיר את תוצאות החיפוש עצמן.
+      } finally {
+        if (!stale) setMoreLoading(false);
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [wantMore, morePage, all, groupId, refreshKey]);
 
   useEffect(() => {
     if (tab !== "mine") return;
@@ -756,124 +842,150 @@ function Warehouse({
     }
   }
 
+  // מה שכבר ברצף לא מוצג כאן בכלל (השרת מדלג עליו, וזו רשת ביטחון עד לטעינה הבאה).
+  const fresh = (cards: WhCard[]) => cards.filter((c) => !usedUrls.has(c.url));
+  const main = fresh(osCards);
+  const extra = wantMore ? fresh(moreCards).filter((c) => !main.some((m) => m.key === c.key)) : [];
+  const mineFresh = fresh(mine);
+  const loading = osLoading || moreLoading;
+  const canLoadMore = !loading && !osError && (osCards.length < osTotal || (wantMore && moreCards.length < moreTotal));
+
+  const loadMore = useCallback(() => {
+    if (osCards.length < osTotal) setPage((p) => p + 1);
+    else setMorePage((p) => p + 1);
+  }, [osCards.length, osTotal]);
+
+  // גלילה עד סוף הרשימה טוענת את ההמשך.
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !canLoadMore || tab !== "os") return;
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && loadMore(), { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canLoadMore, loadMore, tab]);
+
   return (
-    <aside className="w-[22rem] shrink-0 sticky top-4 self-start rounded-3xl bg-white border border-line shadow-sm flex flex-col max-h-[calc(100vh-2rem)]">
-      <div className="flex items-center gap-2 p-3.5 pb-2">
-        <h2 className="text-lg font-extrabold">המחסן</h2>
-        <button className="btn-icon ms-auto" data-tip="סגירת המחסן" aria-label="סגירת המחסן" onClick={onClose}>
-          <PanelLeftClose size={18} strokeWidth={2} />
-        </button>
-      </div>
-
-      <div className="mx-3.5 mb-2 flex gap-1 rounded-full bg-page p-1">
-        {(
-          [
-            ["os", "מחומר פתוח"],
-            ["mine", "שלי"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${tab === key ? "bg-white text-blue-dark shadow-sm" : "text-muted"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "os" && (
-        <div className="px-3.5 pb-2 flex flex-col gap-2">
-          <input
-            className="field !py-1.5 text-sm"
-            placeholder="חיפוש בחומר פתוח"
-            value={manualQ}
-            onChange={(e) => setManualQ(e.target.value)}
-          />
-          {autoActive && (
-            <div className="flex items-center gap-1.5 rounded-full bg-blue-soft text-blue-dark text-xs ps-3 pe-1 py-1">
-              <span className="truncate">לפי שם השיעור: {autoQuery}</span>
-              <button
-                className="btn-icon !p-1 ms-auto shrink-0"
-                data-tip="חיפוש רחב יותר"
-                aria-label="הסרת הסינון לפי שם השיעור"
-                onClick={() => setAutoOff(autoKey)}
-              >
-                <X size={14} strokeWidth={2} />
-              </button>
-            </div>
-          )}
-          <div className="flex gap-1 text-xs">
-            {(
-              [
-                [false, "לפי הכיתה והתחום"],
-                [true, "כל המאגר"],
-              ] as const
-            ).map(([val, label]) => (
-              <button
-                key={label}
-                onClick={() => setAll(val)}
-                className={`rounded-full border px-3 py-1 transition ${all === val ? "bg-blue-soft border-blue text-blue-dark" : "border-line text-muted"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+    <section className="mx-auto mt-8 flex max-w-[110rem] items-start gap-6">
+      <div className="sticky top-4 flex w-60 shrink-0 flex-col gap-2">
+        <h2 className="text-lg font-extrabold" data-tip="גוררים פריט מכאן אל שיעור. הפופולריים ביותר מוצגים ראשונים">
+          מהמאגר
+        </h2>
+        <div className="flex gap-1 rounded-full bg-white border border-line p-1">
+          {(
+            [
+              ["os", "מחומר פתוח"],
+              ["mine", "שלי"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${tab === key ? "bg-blue-soft text-blue-dark" : "text-muted"}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      )}
 
-      {tab === "mine" && (
-        <div className="px-3.5 pb-2">
-          <PasteZone onUrls={pasteToWarehouse} busy={pasteBusy} compact />
-        </div>
-      )}
-
-      <div className="overflow-y-auto px-3.5 pb-3.5 flex flex-col gap-1.5">
         {tab === "os" ? (
           <>
-            {[...osCards.filter((c) => !usedUrls.has(c.url)), ...osCards.filter((c) => usedUrls.has(c.url))].map((c) => (
-              <WhDraggable
-                key={c.key}
-                card={c}
-                used={usedUrls.has(c.url)}
-                onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined}
-              />
-            ))}
-            {osError && <p className="text-coral text-sm">{osError}</p>}
-            {osLoading && <p className="text-muted text-sm text-center py-2">טוענים…</p>}
-            {!osLoading && !osError && osCards.length === 0 && (
-              <div className="text-center py-6 flex flex-col items-center gap-2">
-                <p className="text-muted text-sm">לא נמצאו פריטים</p>
-                {!all ? (
+            <input className="field !py-1.5 text-sm" placeholder="חיפוש בחומר פתוח" value={manualQ} onChange={(e) => setManualQ(e.target.value)} />
+            {autoActive && (
+              <div className="flex items-center gap-1.5 rounded-full bg-blue-soft text-blue-dark text-xs ps-3 pe-1 py-1">
+                <span className="truncate">לפי שם השיעור: {autoQuery}</span>
+                <button
+                  className="btn-icon !p-1 ms-auto shrink-0"
+                  data-tip="חיפוש רחב יותר"
+                  aria-label="הסרת הסינון לפי שם השיעור"
+                  onClick={() => setAutoOff(autoKey)}
+                >
+                  <X size={14} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1 text-xs">
+              {(
+                [
+                  [false, "לפי הכיתה והתחום"],
+                  [true, "כל המאגר"],
+                ] as const
+              ).map(([val, label]) => (
+                <button
+                  key={label}
+                  onClick={() => setAll(val)}
+                  className={`rounded-full border px-3 py-1 transition ${all === val ? "bg-blue-soft border-blue text-blue-dark" : "border-line bg-white text-muted"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <PasteZone onUrls={pasteToWarehouse} busy={pasteBusy} compact />
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        {tab === "os" ? (
+          <>
+            <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
+              {main.map((c, i) => (
+                <Butterfly key={c.key} card={c} rank={i} onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined} />
+              ))}
+            </div>
+            {extra.length > 0 && (
+              <>
+                {main.length > 0 && <p className="px-3 pt-5 text-xs text-muted">עוד מהכיתה ומהתחום</p>}
+                <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
+                  {extra.map((c, i) => (
+                    <Butterfly
+                      key={c.key}
+                      card={c}
+                      rank={main.length + i}
+                      onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+            {osError && <p className="px-3 text-coral text-sm">{osError}</p>}
+            {loading && <p className="text-muted text-sm text-center py-4">טוענים…</p>}
+            {!loading && !osError && main.length === 0 && extra.length === 0 && (
+              <div className="py-8 flex flex-col items-center gap-2 text-center">
+                <p className="text-muted text-sm">לא נמצאו פריטים חדשים</p>
+                {!all && (
                   <button className="btn btn-ghost !py-1 text-xs" onClick={() => setAll(true)}>
                     חיפוש בכל המאגר
                   </button>
-                ) : (
-                  autoActive && (
-                    <button className="btn btn-ghost !py-1 text-xs" onClick={() => setAutoOff(autoKey)}>
-                      הסרת הסינון לפי שם השיעור
-                    </button>
-                  )
                 )}
               </div>
             )}
-            {!osLoading && osCards.length < osTotal && (
-              <button className="btn btn-ghost justify-center" onClick={() => setPage((p) => p + 1)}>
-                עוד
-              </button>
+            <div ref={sentinel} className="h-px" />
+            {canLoadMore && (
+              <div className="flex justify-center pt-3">
+                <button className="btn btn-ghost" onClick={loadMore}>
+                  עוד
+                </button>
+              </div>
             )}
           </>
         ) : (
           <>
-            {[...mine.filter((c) => !(c.kind === "item" && c.placed > 0)), ...mine.filter((c) => c.kind === "item" && c.placed > 0)].map((c) => (
-              <WhDraggable key={c.key} card={c} used={c.kind === "item" && c.placed > 0} />
-            ))}
-            {mine.length === 0 && <p className="text-muted text-sm text-center py-6">הדביקו קישורים כדי לצבור כאן פריטים</p>}
+            <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
+              {mineFresh.map((c, i) => (
+                <Butterfly key={c.key} card={c} rank={i} />
+              ))}
+            </div>
+            {mineFresh.length === 0 && (
+              <p className="text-muted text-sm text-center py-8">
+                {mine.length === 0 ? "הדביקו קישורים כדי לצבור כאן פריטים" : "כל הפריטים שלך כבר נמצאים ברצף הזה"}
+              </p>
+            )}
           </>
         )}
       </div>
       {preview && <PreviewDialog postId={preview.postId} fallbackTitle={preview.title} onClose={() => setPreview(null)} />}
-    </aside>
+    </section>
   );
 }
 
@@ -965,7 +1077,7 @@ function CrossSection({
   return (
     <section
       ref={setNodeRef}
-      className={`mt-6 rounded-3xl border p-3.5 transition-all ${
+      className={`sticky top-4 shrink-0 self-start rounded-3xl border p-3.5 transition-all max-h-[calc(100vh-2rem)] overflow-y-auto no-scrollbar ${open ? "w-[19rem]" : "w-auto"} ${
         isOver ? "border-blue bg-blue-soft ring-4 ring-blue/20" : dragging ? "border-blue/50 border-dashed bg-white/70" : "border-line bg-white/60"
       }`}
     >
@@ -974,12 +1086,12 @@ function CrossSection({
           קישורים כלליים
         </h2>
         <span className="rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-0.5 tabular-nums">{items.length}</span>
-        {dragging && <span className="text-sm text-blue-dark">שחררו כאן כדי להפוך לקישור כללי</span>}
         <span className="ms-auto text-muted">{open ? <ChevronUp size={18} strokeWidth={2} /> : <ChevronDown size={18} strokeWidth={2} />}</span>
       </button>
+      {dragging && <p className="mt-1 text-xs text-blue-dark">שחררו כאן כדי להפוך לקישור כללי</p>}
 
       {open && (
-        <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 flex flex-col gap-2">
           {items.map((c) => (
             <CrossCard
               key={c.id}
@@ -1008,7 +1120,7 @@ export default function Board({ groupId }: { groupId: number }) {
   const [busy, setBusy] = useState(false);
   const [activeLesson, setActiveLesson] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  const [warehouseOpen, setWarehouseOpen] = useState(true);
+  const [presenting, setPresenting] = useState<number | null>(null);
   const [crossOpen, setCrossOpen] = useState(true);
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
@@ -1407,6 +1519,7 @@ export default function Board({ groupId }: { groupId: number }) {
   ).trim();
   // שם ברירת מחדל ("שיעור 3") לא מחפש כלום; שם אמיתי הופך לחיפוש במחסן.
   const autoQuery = /^שיעור\s*\d*$/.test(activeTitle) ? "" : activeTitle;
+  const presentLesson = presenting != null ? (data.lessons.find((l) => l.id === presenting) ?? null) : null;
   const usedUrls = new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
 
   return (
@@ -1430,11 +1543,6 @@ export default function Board({ groupId }: { groupId: number }) {
           <Settings2 size={16} strokeWidth={2} />
         </button>
         <div className="ms-auto flex gap-2">
-          {!warehouseOpen && (
-            <button className="btn btn-primary" onClick={() => setWarehouseOpen(true)}>
-              <PanelLeftOpen size={16} strokeWidth={2} /> המחסן
-            </button>
-          )}
           <button
             className="btn btn-ghost"
             data-tip="הקוד שהתלמידים יזינו כדי להצטרף"
@@ -1509,6 +1617,20 @@ export default function Board({ groupId }: { groupId: number }) {
         />
       )}
 
+      {presentLesson && (
+        <LessonMode
+          key={presentLesson.id}
+          lesson={presentLesson}
+          number={visibleLessons.findIndex((l) => l.id === presentLesson.id) + 1}
+          color={topicColor}
+          nextLesson={visibleLessons[visibleLessons.findIndex((l) => l.id === presentLesson.id) + 1] ?? null}
+          onClose={() => {
+            setPresenting(null);
+            load();
+          }}
+        />
+      )}
+
       <DndContext
         sensors={sensors}
         collisionDetection={collision}
@@ -1553,6 +1675,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onPublish={setPublishFor}
                       onItemType={itemType}
                       onPublishLesson={() => setPublishLessonFor(l)}
+                      onPresent={() => setPresenting(l.id)}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>
@@ -1561,35 +1684,32 @@ export default function Board({ groupId }: { groupId: number }) {
                 </div>
               </SortableContext>
             </div>
-
-            <CrossSection
-              open={crossOpen}
-              onToggle={() => setCrossOpen((v) => !v)}
-              items={visibleCross}
-              topicColor={topicColor}
-              dragging={dragKind === "item" && !dragFromCross}
-              isOver={overCross && !dragFromCross}
-              busy={busy}
-              currentTopicId={currentTopicId}
-              onAddUrls={addCross}
-              onRemove={removeCross}
-              onToggleScope={toggleCrossScope}
-              onToggleUnit={toggleCrossUnit}
-            />
           </div>
 
-          {warehouseOpen && (
-            <Warehouse
-              groupId={groupId}
-              usedUrls={usedUrls}
-              refreshKey={warehouseKey}
-              autoQuery={autoQuery}
-              autoKey={activeLesson}
-              onClose={() => setWarehouseOpen(false)}
-              onItemsChanged={bumpWarehouse}
-            />
-          )}
+          <CrossSection
+            open={crossOpen}
+            onToggle={() => setCrossOpen((v) => !v)}
+            items={visibleCross}
+            topicColor={topicColor}
+            dragging={dragKind === "item" && !dragFromCross}
+            isOver={overCross && !dragFromCross}
+            busy={busy}
+            currentTopicId={currentTopicId}
+            onAddUrls={addCross}
+            onRemove={removeCross}
+            onToggleScope={toggleCrossScope}
+            onToggleUnit={toggleCrossUnit}
+          />
         </div>
+
+        <Warehouse
+          groupId={groupId}
+          usedUrls={usedUrls}
+          refreshKey={warehouseKey}
+          autoQuery={autoQuery}
+          autoKey={activeLesson}
+          onItemsChanged={bumpWarehouse}
+        />
 
         <DragOverlay dropAnimation={null}>
           {dragCard && (

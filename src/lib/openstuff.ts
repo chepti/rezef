@@ -35,17 +35,12 @@ export type WarehouseCard = {
   classes: string[];
   subjects: string[];
   category: string | null;
+  views: number;
+  likes: number;
+  used: number;
 };
 
-type WpPost = {
-  id: number;
-  link: string;
-  title: { rendered: string };
-  _embedded?: {
-    "wp:featuredmedia"?: Array<{ source_url?: string }>;
-    "wp:term"?: Array<Array<{ taxonomy: string; name: string }>>;
-  };
-};
+const KNOWN_TYPES = ["סרטון", "מצגת", "להדפסה", "מערך שיעור", "פעילות", "כלי דיגיטלי", "תבנית"];
 
 function decode(s: string): string {
   return s
@@ -62,38 +57,31 @@ export async function searchOpenstuff(opts: {
   className?: string | null;
   subjectName?: string | null;
   page?: number;
+  exclude?: number[];
 }): Promise<{ cards: WarehouseCard[]; total: number }> {
-  const params = new URLSearchParams({
-    per_page: "20",
-    page: String(opts.page ?? 1),
-    _embed: "1",
+  // נקודת החיפוש של תוסף הגשר: ממיינת מהפופולרי ומטה, ומדלגת על מה שכבר ברצף.
+  const params = new URLSearchParams({ per_page: "24", page: String(opts.page ?? 1) });
+  if (opts.q?.trim()) params.set("q", opts.q.trim());
+  if (opts.className) params.set("class", opts.className);
+  if (opts.subjectName) params.set("subject", opts.subjectName);
+  if (opts.exclude?.length) params.set("exclude", opts.exclude.slice(0, 500).join(","));
+
+  const res = await fetch(`${WP}/wp-json/rezef/v1/search?${params}`, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(10000),
   });
-  if (opts.q?.trim()) params.set("search", opts.q.trim());
-
-  // שם שלא נמצא ברשימת המונחים פשוט לא מסנן: עדיף יותר תוצאות מאשר מסך ריק.
-  if (opts.className) {
-    const id = (await getTerms("classes")).find((t) => t.name === opts.className)?.id;
-    if (id) params.set("classes", String(id));
-  }
-  if (opts.subjectName) {
-    const id = (await getTerms("subjects")).find((t) => t.name === opts.subjectName)?.id;
-    if (id) params.set("subjects", String(id));
-  }
-
-  const { data, total } = await wp<WpPost[]>(`posts?${params}`);
+  if (!res.ok) throw new Error(`wp ${res.status}`);
+  const data = (await res.json()) as {
+    total: number;
+    cards: Array<Omit<WarehouseCard, "category"> & { category: string | null; categories?: string[] }>;
+  };
   return {
-    total,
-    cards: data.map((p) => {
-      const terms = (p._embedded?.["wp:term"] ?? []).flat();
-      return {
-        id: p.id,
-        url: p.link,
-        title: decode(p.title.rendered),
-        imageUrl: p._embedded?.["wp:featuredmedia"]?.[0]?.source_url ?? null,
-        classes: terms.filter((t) => t.taxonomy === "class").map((t) => t.name),
-        subjects: terms.filter((t) => t.taxonomy === "subject").map((t) => t.name),
-        category: terms.find((t) => t.taxonomy === "category")?.name ?? null,
-      };
-    }),
+    total: data.total,
+    cards: data.cards.map(({ categories, ...c }) => ({
+      ...c,
+      title: decode(c.title),
+      // לפוסט יכולות להיות כמה קטגוריות; מעדיפים את זו שהיא סוג תוכן מוכר.
+      category: categories?.find((n) => KNOWN_TYPES.includes(n)) ?? c.category,
+    })),
   };
 }
