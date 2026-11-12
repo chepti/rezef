@@ -201,3 +201,14 @@ body {
     animation: none;
   }
 }
+
+/* לכפתור שיושב בקצה הימני: הטולטיפ נפתח שמאלה מהקצה, כדי שלא ייחתך. */
+[data-tip-edge="right"]::after {
+  left: auto;
+  right: 0;
+  transform: translate(0, 4px);
+}
+[data-tip-edge="right"]:hover::after,
+[data-tip-edge="right"]:focus-visible::after {
+  transform: translate(0, 0);
+}

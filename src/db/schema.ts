@@ -207,6 +207,15 @@ export const submissions = pgTable(
       .notNull()
       .references(() => lessonItems.id, { onDelete: "cascade" }),
     doneAt: timestamp("done_at").defaultNow().notNull(),
+    // מה שהתלמיד מגיש: תשובה בטקסט, קישור לעבודה, כמה היה קשה (1 קל, 2 בסדר, 3 קשה) ובקשת עזרה.
+    answer: text("answer").notNull().default(""),
+    link: text("link"),
+    rating: integer("rating"),
+    needsHelp: boolean("needs_help").notNull().default(false),
+    // משוב קצר מהמורה, שהתלמיד רואה ליד ההגשה.
+    feedback: text("feedback").notNull().default(""),
+    feedbackAt: timestamp("feedback_at"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (t) => [uniqueIndex("submissions_member_item_idx").on(t.membershipId, t.lessonItemId)],
 );
@@ -220,5 +229,20 @@ export const lessonBoards = pgTable("lesson_boards", {
   // תמונה מוקטנת כ-data URL (webp), כדי לא לנהל אחסון קבצים נפרד בשלב הזה.
   image: text("image").notNull(),
   caption: text("caption").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// קבצים שהמורה העלתה (בשלב הזה תמונות בלבד). נשמרים במסד עצמו, כדי שיגובו איתו ולא יידרש אחסון נפרד.
+export const files = pgTable("files", {
+  id: serial("id").primaryKey(),
+  // מזהה אקראי בכתובת הקובץ: הקובץ ציבורי למי שיש לו את הכתובת (תלמידים צריכים לראות אותו), אבל אי אפשר לנחש אותה.
+  token: text("token").notNull().unique(),
+  teacherId: integer("teacher_id")
+    .notNull()
+    .references(() => teachers.id),
+  mime: text("mime").notNull(),
+  size: integer("size").notNull(),
+  // התוכן ב-base64.
+  data: text("data").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

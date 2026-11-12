@@ -135,7 +135,7 @@ function Floating({
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   return (
     <div
-      className={`absolute z-30 rounded-3xl border border-line bg-white shadow-2xl ${wide ? "w-[26rem]" : "w-72"} max-w-[calc(100%-1rem)]`}
+      className={`absolute z-40 rounded-3xl border border-line bg-white shadow-2xl ${wide ? "w-[26rem]" : "w-72"} max-w-[calc(100%-1rem)]`}
       style={{ left: pos.x, top: pos.y }}
       dir="rtl"
     >
@@ -555,7 +555,7 @@ export function ToolButtons({
   onBlackout: () => void;
 }) {
   return (
-    <div className="flex items-center gap-1 rounded-full border border-line bg-white px-1.5 py-1" role="toolbar" aria-label="כלי כיתה">
+    <div className="flex items-center gap-0.5 rounded-full bg-white/85 px-1 py-1 shadow-md backdrop-blur" role="toolbar" aria-label="כלי כיתה">
       {TOOLS.map((t) => (
         <button
           key={t.key}
@@ -776,7 +776,8 @@ export function DrawLayer({ active, pageKey, fileName, lessonId }: { active: boo
       />
       {active && (
         <div
-          className="absolute bottom-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-white px-2 py-1.5 shadow-xl"
+          // מעל צ'יפ הטיימר של הפריט (שיושב ב-bottom-3), כדי שלא יתנגשו.
+          className="absolute bottom-16 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/90 px-2 py-1.5 shadow-xl backdrop-blur"
           role="toolbar"
           aria-label="כלי ציור"
         >

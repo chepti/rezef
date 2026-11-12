@@ -48,6 +48,9 @@ services:
       APP_URL: ${APP_URL:?}
       PILOT_WP_USER_IDS: ${PILOT_WP_USER_IDS:-}
       INTERNAL_KEY: ${INTERNAL_KEY:?}
+      # כניסת תלמידים עם Google ארגוני. בלי שני הערכים הכניסה לתלמידים כבויה.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     networks:
       - internal
       - web

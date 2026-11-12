@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { safeFetch } from "./safe-fetch";
 
-export type ItemKind = "openstuff" | "youtube" | "video" | "slides" | "doc" | "file" | "game" | "link";
+export type ItemKind = "openstuff" | "youtube" | "video" | "slides" | "doc" | "file" | "game" | "image" | "link";
 
 export type Unfurled = {
   url: string;
@@ -26,6 +26,7 @@ const KIND_TO_TYPE: Record<ItemKind, string> = {
   doc: "מערך שיעור",
   file: "להדפסה",
   game: "פעילות",
+  image: "אחר",
   link: "אחר",
 };
 
@@ -127,6 +128,11 @@ async function unfurlOembed(endpoint: string): Promise<Partial<Unfurled> | null>
 
 async function unfurlGeneric(u: URL): Promise<Partial<Unfurled>> {
   const res = await safeFetch(u.toString());
+  // קישור ישיר לתמונה: הפריט הוא התמונה עצמה, ובמצב שיעור היא מוצגת על המסך.
+  if (res.status < 400 && /^image\//i.test(res.contentType)) {
+    const name = decodeURIComponent(u.pathname.split("/").pop() ?? "").replace(/\.\w+$/, "");
+    return { kind: "image", imageUrl: res.finalUrl, title: name || "תמונה" };
+  }
   if (res.status >= 400 || !/html/i.test(res.contentType)) {
     return {};
   }

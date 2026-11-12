@@ -24,6 +24,8 @@ import PublishDialog, { type Terms } from "./board-publish";
 import PublishLessonDialog from "./board-publish-lesson";
 import PreviewDialog from "./board-preview";
 import LessonMode from "./board-lesson-mode";
+import SubmissionsDialog from "./board-submissions";
+import { imageFiles, imageFileToDataUrl } from "./image-upload";
 import GroupSettings from "./board-settings";
 import {
   Check,
@@ -34,6 +36,7 @@ import {
   Copy,
   GripVertical,
   Info,
+  Image as ImageIcon,
   Layers,
   Dumbbell,
   File as FileGeneric,
@@ -190,9 +193,11 @@ const CONTENT_TYPES = [
   { name: "תבנית", icon: LayoutTemplate },
   { name: "אחר", icon: FileGeneric },
 ] as const;
-const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = Object.fromEntries(
-  CONTENT_TYPES.map((t) => [t.name, t.icon]),
-);
+const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
+  ...Object.fromEntries(CONTENT_TYPES.map((t) => [t.name, t.icon])),
+  // תמונה שהמורה הדביקה: לא קטגוריה של חומר פתוח (ולכן לא בבורר הסוגים), אבל עם אייקון משלה.
+  תמונה: ImageIcon,
+};
 // גוון לכל סוג, כדי לזהות אותו במבט (על העיגול של הפריט במאגר ועל האייקון ברצועה).
 const TYPE_COLOR: Record<string, string> = {
   סרטון: "#e5484d",
@@ -202,6 +207,7 @@ const TYPE_COLOR: Record<string, string> = {
   פעילות: "#f2702f",
   "כלי דיגיטלי": "#0f8fb8",
   תבנית: "#b7791f",
+  תמונה: "#c2410c",
   אחר: "#5b6472",
 };
 // ניחוש כשעוד אין סוג שמור (קישור חיצוני חדש, או פריט לפני המילוי הראשוני).
@@ -214,6 +220,7 @@ const KIND_TO_TYPE: Record<string, string> = {
   game: "פעילות",
 };
 function typeOf(item: { kind: string; contentType?: string | null }): string {
+  if (item.kind === "image") return "תמונה";
   return item.contentType ?? KIND_TO_TYPE[item.kind] ?? "אחר";
 }
 
@@ -276,6 +283,8 @@ function ItemRow({
   onDelete,
   onPublish,
   onType,
+  subs,
+  onSubs,
 }: {
   li: LessonItem;
   expanded: boolean;
@@ -284,6 +293,8 @@ function ItemRow({
   onDelete: () => void;
   onPublish: () => void;
   onType: (type: string) => void;
+  subs?: { submitted: number; help: number; members: number };
+  onSubs: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
@@ -317,11 +328,26 @@ function ItemRow({
               <DurationIcon kind={duration.key} size={15} />
             </span>
           )}
-          {li.isAssignment && (
-            <span className="text-orange" data-tip="מטלת הגשה">
-              <Pin size={14} strokeWidth={2} />
-            </span>
-          )}
+          {li.isAssignment &&
+            (subs && subs.members > 0 ? (
+              <button
+                type="button"
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums transition hover:bg-orange/20 ${
+                  subs.help > 0 ? "bg-coral/15 text-coral" : "bg-orange/10 text-orange"
+                }`}
+                data-tip={subs.help > 0 ? `הגישו ${subs.submitted} מתוך ${subs.members}, ${subs.help} ביקשו עזרה. לחצו לצפייה` : `הגישו ${subs.submitted} מתוך ${subs.members}. לחצו לצפייה`}
+                aria-label="צפייה בהגשות"
+                onPointerDown={stop}
+                onClick={onSubs}
+              >
+                <Pin size={12} strokeWidth={2} />
+                {subs.submitted}/{subs.members}
+              </button>
+            ) : (
+              <span className="text-orange" data-tip="מטלת הגשה">
+                <Pin size={14} strokeWidth={2} />
+              </span>
+            ))}
           {li.note && !expanded && (
             <span data-tip="יש הערה">
               <StickyNote size={14} strokeWidth={2} />
@@ -494,6 +520,9 @@ function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void
 
 /* ---------- עמודת שיעור ---------- */
 
+// כמה תלמידים בקבוצה, ולכל מטלה כמה הגישו וכמה ביקשו עזרה.
+type SubCounts = { members: number; counts: Record<number, { submitted: number; help: number }> };
+
 function LessonColumn({
   lesson,
   index,
@@ -511,6 +540,9 @@ function LessonColumn({
   onItemDelete,
   onPublish,
   onItemType,
+  subCounts,
+  onSubs,
+  onAddImages,
   onPublishLesson,
   onPresent,
   onToggleOpen,
@@ -531,6 +563,9 @@ function LessonColumn({
   onItemDelete: (id: number) => void;
   onPublish: (li: LessonItem) => void;
   onItemType: (itemId: number, type: string) => void;
+  subCounts: SubCounts;
+  onSubs: (li: LessonItem) => void;
+  onAddImages: (files: File[]) => void;
   onPublishLesson: () => void;
   onPresent: () => void;
   onToggleOpen: () => void;
@@ -555,6 +590,13 @@ function LessonColumn({
       onPointerLeave={onLeave}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
+        // קובץ תמונה שנגרר מהמחשב נשמר ונהיה פריט שמוצג על המסך.
+        const images = imageFiles(e.dataTransfer.files);
+        if (images.length) {
+          e.preventDefault();
+          onAddImages(images);
+          return;
+        }
         const text = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
         const urls = extractUrls(text);
         if (urls.length) {
@@ -647,6 +689,8 @@ function LessonColumn({
               onDelete={() => onItemDelete(li.id)}
               onPublish={() => onPublish(li)}
               onType={(type) => onItemType(li.itemId, type)}
+              subs={subCounts.members ? { members: subCounts.members, submitted: subCounts.counts[li.id]?.submitted ?? 0, help: subCounts.counts[li.id]?.help ?? 0 } : undefined}
+              onSubs={() => onSubs(li)}
             />
           ))}
         </div>
@@ -1224,6 +1268,8 @@ export default function Board({ groupId }: { groupId: number }) {
   const [activeLesson, setActiveLesson] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [presenting, setPresenting] = useState<number | null>(null);
+  const [subCounts, setSubCounts] = useState<SubCounts>({ members: 0, counts: {} });
+  const [subsFor, setSubsFor] = useState<LessonItem | null>(null);
   const [crossOpen, setCrossOpen] = useState(true);
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
@@ -1264,6 +1310,10 @@ export default function Board({ groupId }: { groupId: number }) {
     try {
       const board = (await api(`/api/groups/${groupId}/board`, "GET")) as BoardData;
       setData(board);
+      // מוני ההגשות הם תוספת: כשל בטעינה שלהם לא מפריע ללוח.
+      api(`/api/groups/${groupId}/submission-counts`, "GET")
+        .then((c: SubCounts) => setSubCounts(c))
+        .catch(() => {});
       const topicId = board.sequence.currentTopicId;
       setActiveLesson((cur) =>
         cur != null && board.lessons.some((l) => l.id === cur && l.topicId === topicId) ? cur : firstLessonOf(board, topicId),
@@ -1315,12 +1365,39 @@ export default function Board({ groupId }: { groupId: number }) {
     [load],
   );
 
+  // תמונות שהודבקו או נגררו: כל אחת נשמרת והופכת לפריט בשיעור.
+  const addImages = useCallback(
+    async (lessonId: number, files: File[]) => {
+      setBusy(true);
+      setError("");
+      try {
+        for (const file of files) {
+          const dataUrl = await imageFileToDataUrl(file);
+          await api(`/api/lessons/${lessonId}/images`, "POST", { dataUrl, name: file.name });
+        }
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "העלאת התמונה נכשלה");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load],
+  );
+
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      const urls = extractUrls(e.clipboardData?.getData("text") ?? "");
       const target = activeRef.current;
+      // תמונה מהלוח (צילום מסך, העתקת תמונה) נכנסת לשיעור הפעיל.
+      const images = imageFiles(e.clipboardData?.files);
+      if (images.length && target) {
+        e.preventDefault();
+        addImages(target, images);
+        return;
+      }
+      const urls = extractUrls(e.clipboardData?.getData("text") ?? "");
       if (urls.length && target) {
         e.preventDefault();
         addUrls(target, urls);
@@ -1328,7 +1405,7 @@ export default function Board({ groupId }: { groupId: number }) {
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addUrls]);
+  }, [addUrls, addImages]);
 
   const currentTopicId = data?.sequence.currentTopicId ?? null;
   const visibleLessons = data ? data.lessons.filter((l) => l.topicId === currentTopicId) : [];
@@ -1720,6 +1797,17 @@ export default function Board({ groupId }: { groupId: number }) {
         />
       )}
 
+      {subsFor && (
+        <SubmissionsDialog
+          lessonItemId={subsFor.id}
+          title={subsFor.item.title}
+          onClose={() => {
+            setSubsFor(null);
+            load();
+          }}
+        />
+      )}
+
       {publishLessonFor && (
         <PublishLessonDialog
           lesson={publishLessonFor}
@@ -1799,6 +1887,9 @@ export default function Board({ groupId }: { groupId: number }) {
                       onPublishLesson={() => setPublishLessonFor(l)}
                       onPresent={() => setPresenting(l.id)}
                       onToggleOpen={() => toggleLessonOpen(l)}
+                      subCounts={subCounts}
+                      onSubs={setSubsFor}
+                      onAddImages={(files) => addImages(l.id, files)}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>

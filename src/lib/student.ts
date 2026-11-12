@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { jwtVerify, SignJWT, createRemoteJWKSet } from "jose";
 import { getDb, tables } from "@/db";
 import { HttpError, errorResponse, requireTeacher } from "./session";
+import { resolveEmbed } from "./embed";
 
 const { students, memberships, submissions, groups, sequences, lessons, lessonItems, items, topics, lessonBoards, allowedDomains, teachers } = tables;
 
@@ -257,10 +258,8 @@ export async function studentGroupView(groupId: number) {
   const boards = lessonIds.length
     ? await db.select().from(lessonBoards).where(inArray(lessonBoards.lessonId, lessonIds)).orderBy(asc(lessonBoards.id))
     : [];
-  const done =
-    viewer.kind === "student"
-      ? new Set((await db.select({ id: submissions.lessonItemId }).from(submissions).where(eq(submissions.membershipId, viewer.membershipId))).map((r) => r.id))
-      : new Set<number>();
+  const mine = viewer.kind === "student" ? await db.select().from(submissions).where(eq(submissions.membershipId, viewer.membershipId)) : [];
+  const submissionOf = new Map(mine.map((r) => [r.lessonItemId, r]));
 
   const links = new Map<number, string | null>();
   await Promise.all(
@@ -296,29 +295,62 @@ export async function studentGroupView(groupId: number) {
             url: (r.item.openstuffPostId ? links.get(r.item.openstuffPostId) : null) ?? r.item.url,
             phase: r.li.phase,
             isAssignment: r.li.isAssignment,
-            done: done.has(r.li.id),
+            submission: submissionView(submissionOf.get(r.li.id)),
           })),
       })),
   };
 }
 
-export async function setSubmission(studentId: number, lessonItemId: number, isDone: boolean) {
+type SubmissionRow = typeof submissions.$inferSelect;
+
+function submissionView(row: SubmissionRow | undefined) {
+  if (!row) return null;
+  return { answer: row.answer, link: row.link, rating: row.rating, needsHelp: row.needsHelp, feedback: row.feedback, updatedAt: row.updatedAt };
+}
+
+// פריט בשיעור פתוח, בקבוצה שהתלמיד חבר בה. מחזיר גם את החברות שלו.
+async function memberItem(studentId: number, lessonItemId: number) {
   const db = await getDb();
-  // הפריט חייב להיות מטלה, בשיעור פתוח, בקבוצה שהתלמיד חבר בה.
   const [row] = await db
-    .select({ membershipId: memberships.id })
+    .select({ membershipId: memberships.id, isAssignment: lessonItems.isAssignment, url: items.url, postId: items.openstuffPostId })
     .from(lessonItems)
+    .innerJoin(items, eq(items.id, lessonItems.itemId))
     .innerJoin(lessons, eq(lessons.id, lessonItems.lessonId))
     .innerJoin(sequences, eq(sequences.id, lessons.sequenceId))
     .innerJoin(memberships, and(eq(memberships.groupId, sequences.groupId), eq(memberships.studentId, studentId)))
-    .where(and(eq(lessonItems.id, lessonItemId), eq(lessonItems.isAssignment, true), isNotNull(lessons.openedAt)))
+    .where(and(eq(lessonItems.id, lessonItemId), isNotNull(lessons.openedAt)))
     .limit(1);
-  if (!row) throw new HttpError(404, "המטלה לא נמצאה");
-  if (isDone) {
-    await db.insert(submissions).values({ membershipId: row.membershipId, lessonItemId }).onConflictDoNothing();
-  } else {
-    await db.delete(submissions).where(and(eq(submissions.membershipId, row.membershipId), eq(submissions.lessonItemId, lessonItemId)));
-  }
+  if (!row) throw new HttpError(404, "הפריט לא נמצא");
+  return row;
+}
+
+export type SubmissionInput = { answer: string; link: string | null; rating: number | null; needsHelp: boolean };
+
+// הגשה של מטלה: תשובה, קישור לעבודה, כמה היה קשה ובקשת עזרה. הגשה חוזרת מעדכנת את הקיימת.
+export async function saveSubmission(studentId: number, lessonItemId: number, input: SubmissionInput) {
+  const db = await getDb();
+  const row = await memberItem(studentId, lessonItemId);
+  if (!row.isAssignment) throw new HttpError(404, "המטלה לא נמצאה");
+  const link = input.link?.trim() || null;
+  if (link && !/^https?:\/\//i.test(link)) throw new HttpError(400, "הקישור צריך להתחיל ב-http");
+  const values = { answer: input.answer.trim().slice(0, 4000), link, rating: input.rating, needsHelp: input.needsHelp, updatedAt: new Date() };
+  await db
+    .insert(submissions)
+    .values({ membershipId: row.membershipId, lessonItemId, ...values })
+    .onConflictDoUpdate({ target: [submissions.membershipId, submissions.lessonItemId], set: values });
+}
+
+export async function deleteSubmission(studentId: number, lessonItemId: number) {
+  const db = await getDb();
+  const row = await memberItem(studentId, lessonItemId);
+  await db.delete(submissions).where(and(eq(submissions.membershipId, row.membershipId), eq(submissions.lessonItemId, lessonItemId)));
+}
+
+// האם אפשר להציג את הפריט בתוך הדף של התלמיד. רק לפריט שהתלמיד רשאי לראות.
+export async function studentItemEmbed(studentId: number, lessonItemId: number) {
+  const row = await memberItem(studentId, lessonItemId);
+  const url = (row.postId ? await directLink(row.postId) : null) ?? row.url;
+  return resolveEmbed(url);
 }
 
 /* ---------- צד המורה: פתיחת שיעור, רשימת תלמידים, לוחות ---------- */
@@ -415,4 +447,66 @@ export async function removeMember(membershipId: number, teacherId: number) {
   if (!member) throw new HttpError(404, "התלמיד לא נמצא");
   await ownedGroupId(member.groupId, teacherId);
   await db.delete(memberships).where(eq(memberships.id, membershipId));
+}
+
+/* ---------- צד המורה: הגשות ---------- */
+
+async function ownedLessonItemGroup(lessonItemId: number, teacherId: number) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ groupId: groups.id })
+    .from(lessonItems)
+    .innerJoin(lessons, eq(lessons.id, lessonItems.lessonId))
+    .innerJoin(sequences, eq(sequences.id, lessons.sequenceId))
+    .innerJoin(groups, eq(groups.id, sequences.groupId))
+    .where(and(eq(lessonItems.id, lessonItemId), eq(groups.teacherId, teacherId)))
+    .limit(1);
+  if (!row) throw new HttpError(404, "הפריט לא נמצא");
+  return row.groupId;
+}
+
+// כל תלמידי הקבוצה מול מטלה אחת: מי הגיש, מה כתב, ומי עוד לא.
+export async function listSubmissions(lessonItemId: number, teacherId: number) {
+  const db = await getDb();
+  const groupId = await ownedLessonItemGroup(lessonItemId, teacherId);
+  const members = await db
+    .select({ id: memberships.id, nickname: memberships.nickname })
+    .from(memberships)
+    .where(eq(memberships.groupId, groupId))
+    .orderBy(asc(memberships.nickname));
+  const rows = await db.select().from(submissions).where(eq(submissions.lessonItemId, lessonItemId));
+  const byMember = new Map(rows.map((r) => [r.membershipId, r]));
+  return members.map((m) => {
+    const r = byMember.get(m.id);
+    return { membershipId: m.id, nickname: m.nickname, submission: r ? { id: r.id, ...submissionView(r) } : null };
+  });
+}
+
+export async function setFeedback(submissionId: number, teacherId: number, feedback: string) {
+  const db = await getDb();
+  const [row] = await db.select().from(submissions).where(eq(submissions.id, submissionId)).limit(1);
+  if (!row) throw new HttpError(404, "ההגשה לא נמצאה");
+  await ownedLessonItemGroup(row.lessonItemId, teacherId);
+  await db
+    .update(submissions)
+    .set({ feedback: feedback.trim().slice(0, 1000), feedbackAt: new Date() })
+    .where(eq(submissions.id, submissionId));
+}
+
+// לכל מטלה בקבוצה: כמה הגישו וכמה ביקשו עזרה. בשביל המונה שעל הפריט בלוח של המורה.
+export async function submissionCounts(groupId: number, teacherId: number) {
+  const db = await getDb();
+  await ownedGroupId(groupId, teacherId);
+  const members = await db.select({ id: memberships.id }).from(memberships).where(eq(memberships.groupId, groupId));
+  const ids = members.map((m) => m.id);
+  const rows = ids.length
+    ? await db.select({ lessonItemId: submissions.lessonItemId, needsHelp: submissions.needsHelp }).from(submissions).where(inArray(submissions.membershipId, ids))
+    : [];
+  const counts: Record<number, { submitted: number; help: number }> = {};
+  for (const r of rows) {
+    const c = (counts[r.lessonItemId] ??= { submitted: 0, help: 0 });
+    c.submitted++;
+    if (r.needsHelp) c.help++;
+  }
+  return { members: ids.length, counts };
 }

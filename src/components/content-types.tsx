@@ -1,4 +1,4 @@
-import { File as FileGeneric, FileText, Gamepad2, LayoutTemplate, Presentation, Printer, Smartphone, Video } from "lucide-react";
+import { File as FileGeneric, FileText, Gamepad2, Image as ImageIcon, LayoutTemplate, Presentation, Printer, Smartphone, Video } from "lucide-react";
 
 type IconType = React.ComponentType<{ size?: number; strokeWidth?: number }>;
 
@@ -11,12 +11,15 @@ export const TYPE_META: Record<string, { icon: IconType; color: string }> = {
   פעילות: { icon: Gamepad2, color: "#f2702f" },
   "כלי דיגיטלי": { icon: Smartphone, color: "#0f8fb8" },
   תבנית: { icon: LayoutTemplate, color: "#b7791f" },
+  תמונה: { icon: ImageIcon, color: "#c2410c" },
   אחר: { icon: FileGeneric, color: "#5b6472" },
 };
 
 const KIND_TO_TYPE: Record<string, string> = { youtube: "סרטון", video: "סרטון", slides: "מצגת", doc: "מערך שיעור", file: "להדפסה", game: "פעילות" };
 
 export function typeOf(item: { kind: string; contentType?: string | null }): string {
+  // תמונה שהמורה הדביקה היא סוג בפני עצמו, גם אם נשמרה בלי קטגוריה.
+  if (item.kind === "image") return "תמונה";
   const type = item.contentType ?? KIND_TO_TYPE[item.kind] ?? "אחר";
   return TYPE_META[type] ? type : "אחר";
 }
