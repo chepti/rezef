@@ -171,3 +171,9 @@ body {
     animation: none;
   }
 }
+
+/* לאלמנט שיושב בראש המסך: הטולטיפ נפתח מתחתיו, כדי שלא ייחתך. */
+[data-tip-pos="below"]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}

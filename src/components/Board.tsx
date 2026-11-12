@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   closestCorners,
   type CollisionDetection,
@@ -190,6 +190,17 @@ const CONTENT_TYPES = [
 const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = Object.fromEntries(
   CONTENT_TYPES.map((t) => [t.name, t.icon]),
 );
+// גוון לכל סוג, כדי לזהות אותו במבט (על העיגול של הפריט במאגר ועל האייקון ברצועה).
+const TYPE_COLOR: Record<string, string> = {
+  סרטון: "#e5484d",
+  מצגת: "#4f6cd6",
+  להדפסה: "#0e9f8a",
+  "מערך שיעור": "#8a63d2",
+  פעילות: "#f2702f",
+  "כלי דיגיטלי": "#0f8fb8",
+  תבנית: "#b7791f",
+  אחר: "#5b6472",
+};
 // ניחוש כשעוד אין סוג שמור (קישור חיצוני חדש, או פריט לפני המילוי הראשוני).
 const KIND_TO_TYPE: Record<string, string> = {
   youtube: "סרטון",
@@ -257,6 +268,7 @@ function Thumb({ item, size }: { item: { imageUrl: string | null; kind: string; 
 function ItemRow({
   li,
   expanded,
+  onToggle,
   onChange,
   onDelete,
   onPublish,
@@ -264,6 +276,7 @@ function ItemRow({
 }: {
   li: LessonItem;
   expanded: boolean;
+  onToggle: () => void;
   onChange: (patch: ItemPatch) => void;
   onDelete: () => void;
   onPublish: () => void;
@@ -316,9 +329,20 @@ function ItemRow({
               <PhaseIcon size={15} strokeWidth={2} />
             </span>
           )}
-          <span className="text-ink" data-tip={itemType}>
+          <span data-tip={itemType} style={{ color: TYPE_COLOR[itemType] ?? "var(--ink)" }}>
             <TypeIcon size={15} strokeWidth={2} />
           </span>
+          <button
+            type="button"
+            className="btn-icon !p-1"
+            data-tip={expanded ? "סגירת הפרטים" : "פרטים: סוג, שלב, זמן והערה"}
+            aria-label={expanded ? "סגירת פרטי הפריט" : "פתיחת פרטי הפריט"}
+            aria-expanded={expanded}
+            onPointerDown={stop}
+            onClick={onToggle}
+          >
+            {expanded ? <ChevronUp size={15} strokeWidth={2} /> : <ChevronDown size={15} strokeWidth={2} />}
+          </button>
         </div>
       </div>
 
@@ -510,6 +534,8 @@ function LessonColumn({
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
   const { attributes, listeners, setNodeRef: setSortRef, transform, transition, isDragging } = useSortable({ id: `ls-${lesson.id}` });
   const [title, setTitle] = useState(lesson.title);
+  // אקורדיון: הפריטים דחוסים, ורק אחד נפתח בכל פעם (בלחיצה על החץ שלו).
+  const [openItem, setOpenItem] = useState<number | null>(null);
   // הערכה גסה לפי הסקאלה; "יחידה ארוכה" לא נספרת כי היא לא שייכת לשיעור אחד.
   const total = lesson.items.reduce((sum, li) => sum + (DURATIONS.find((d) => d.key === li.duration)?.minutes ?? 0), 0);
 
@@ -600,7 +626,8 @@ function LessonColumn({
             <ItemRow
               key={li.id}
               li={li}
-              expanded={active}
+              expanded={openItem === li.id}
+              onToggle={() => setOpenItem((cur) => (cur === li.id ? null : li.id))}
               onChange={(p) => onItemChange(li.id, p)}
               onDelete={() => onItemDelete(li.id)}
               onPublish={() => onPublish(li)}
@@ -666,7 +693,11 @@ function Butterfly({ card, rank, onPreview }: { card: WhCard; rank: number; onPr
       </div>
       {/* data-tip קובע position: relative, ולכן המיקום המוחלט יושב על עטיפה נפרדת. */}
       <span className="absolute -top-2.5 -start-2.5">
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-ink text-white shadow-md ring-2 ring-white" data-tip={type}>
+        <span
+          className="flex h-9 w-9 items-center justify-center rounded-full text-white shadow-md ring-2 ring-white"
+          style={{ background: TYPE_COLOR[type] ?? "var(--ink)" }}
+          data-tip={type}
+        >
           <TypeIcon size={18} strokeWidth={2} />
         </span>
       </span>
@@ -706,12 +737,16 @@ function toOsCards(data: OsResponse): WhCard[] {
 }
 const mergeCards = (prev: WhCard[], next: WhCard[]) => [...prev, ...next.filter((c) => !prev.some((p) => p.key === c.key))];
 
+// שכבות הטעינה של המאגר, לפי הסדר: כל שכבה נטענת עד הסוף, ואז ממשיכים לבאה.
+type Tier = { label: string; query: Record<string, string> };
+
 function Warehouse({
   groupId,
   usedUrls,
   refreshKey,
   autoQuery,
   autoKey,
+  topicName,
   onItemsChanged,
 }: {
   groupId: number;
@@ -719,6 +754,7 @@ function Warehouse({
   refreshKey: number;
   autoQuery: string;
   autoKey: number | null;
+  topicName: string;
   onItemsChanged: () => void;
 }) {
   const [tab, setTab] = useState<"os" | "mine">("os");
@@ -726,88 +762,90 @@ function Warehouse({
   // שם השיעור הפעיל משמש כחיפוש, עד שהמורה מקלידה בעצמה או מסירה אותו. מתאפס במעבר לשיעור אחר.
   const [autoOff, setAutoOff] = useState<number | null>(null);
   const autoActive = autoQuery !== "" && autoOff !== autoKey && manualQ.trim() === "";
-  const q = manualQ.trim() || (autoActive ? autoQuery : "");
   const [all, setAll] = useState(false);
-  const searchKey = `${q}|${all}`;
-  const [page, setPage] = useState(1);
-  const [osCards, setOsCards] = useState<WhCard[]>([]);
-  const [osTotal, setOsTotal] = useState(0);
-  const [loadedKey, setLoadedKey] = useState("");
+  const typed = manualQ.trim();
+
+  // חיפוש שהוקלד: רק התוצאות שלו. לפי שם השיעור: קודם מה שקשור לשיעור ולנושא, ורק אחריו שאר הכיתה והתחום.
+  const tiers: Tier[] = useMemo(() => {
+    const scope: Record<string, string> = all ? { all: "1" } : {};
+    if (typed) return [{ label: "", query: { ...scope, q: typed } }];
+    if (!autoActive) return [{ label: "", query: scope }];
+    const related = { related: "1", q: autoQuery, topic: topicName };
+    return [
+      { label: `קשורים לשיעור "${autoQuery}"`, query: { ...scope, ...related } },
+      ...(all ? [] : [{ label: "קשורים, מכיתות ומתחומים אחרים", query: { all: "1", ...related } }]),
+      { label: all ? "עוד מהמאגר" : "עוד מהכיתה ומהתחום", query: scope },
+    ];
+  }, [typed, autoActive, autoQuery, topicName, all]);
+  const tiersKey = JSON.stringify(tiers);
+
+  const [lists, setLists] = useState<WhCard[][]>([]);
+  const [totals, setTotals] = useState<number[]>([]);
+  const [cursor, setCursor] = useState({ tier: 0, page: 1 });
+  const [loadedFor, setLoadedFor] = useState("");
   const [osLoading, setOsLoading] = useState(false);
   const [osError, setOsError] = useState("");
-  // כשהחיפוש לפי שם השיעור נגמר, ממשיכים עם שאר הפריטים של הכיתה והתחום (בלי מילת החיפוש).
-  const [morePage, setMorePage] = useState(1);
-  const [moreCards, setMoreCards] = useState<WhCard[]>([]);
-  const [moreTotal, setMoreTotal] = useState(0);
-  const [moreLoading, setMoreLoading] = useState(false);
   const [mine, setMine] = useState<WhCard[]>([]);
   const [pasteBusy, setPasteBusy] = useState(false);
   const [preview, setPreview] = useState<{ postId: number; title: string } | null>(null);
   const sentinel = useRef<HTMLDivElement | null>(null);
+  const listsRef = useRef<WhCard[][]>([]);
+  useEffect(() => {
+    listsRef.current = lists;
+  }, [lists]);
 
+  // חיפוש חדש (או שינוי ברצף) מתחיל מהשכבה הראשונה.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPage(1);
-    setMorePage(1);
-    setMoreCards([]);
-    setMoreTotal(0);
-  }, [searchKey]);
+    setCursor({ tier: 0, page: 1 });
+  }, [tiersKey, refreshKey]);
 
   useEffect(() => {
     if (tab !== "os") return;
+    const tier = tiers[cursor.tier];
+    if (!tier) return;
     // תשובה של חיפוש ישן לא רשאית לדרוס חיפוש חדש.
     let stale = false;
-    const handle = setTimeout(async () => {
-      setOsLoading(true);
-      setOsError("");
-      try {
-        const params = new URLSearchParams({ group: String(groupId), q, page: String(page) });
-        if (all) params.set("all", "1");
-        const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
-        if (stale) return;
-        const cards = toOsCards(data);
-        setOsCards((prev) => (page === 1 ? cards : mergeCards(prev, cards)));
-        setOsTotal(data.total);
-        setLoadedKey(`${q}|${all}`);
-      } catch (e) {
-        if (!stale) setOsError(e instanceof Error ? e.message : "שגיאה");
-      } finally {
-        if (!stale) setOsLoading(false);
-      }
-    }, q ? 350 : 0);
+    const first = cursor.tier === 0 && cursor.page === 1;
+    const handle = setTimeout(
+      async () => {
+        setOsLoading(true);
+        setOsError("");
+        try {
+          const params = new URLSearchParams({ group: String(groupId), page: String(cursor.page), ...tier.query });
+          const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
+          if (stale) return;
+          const cards = toOsCards(data);
+          setLists((prev) => {
+            const next = first ? [] : prev.slice(0, cursor.tier + 1);
+            next[cursor.tier] = cursor.page === 1 ? cards : mergeCards(next[cursor.tier] ?? [], cards);
+            return next;
+          });
+          setTotals((prev) => {
+            const next = first ? [] : prev.slice(0, cursor.tier + 1);
+            next[cursor.tier] = data.total;
+            return next;
+          });
+          setLoadedFor(`${tiersKey}|${cursor.tier}|${cursor.page}`);
+          // שכבה שהסתיימה עם מעט פריטים ממשיכה מעצמה לשכבה הבאה, כדי שהמסך לא יישאר ריק.
+          const before = first ? 0 : listsRef.current.slice(0, cursor.tier).reduce((sum, l) => sum + (l?.length ?? 0), 0);
+          const tierEnded = cards.length === 0 || cursor.page * 24 >= data.total;
+          if (tierEnded && cursor.tier < tiers.length - 1 && before + data.total < 14) setCursor({ tier: cursor.tier + 1, page: 1 });
+        } catch (e) {
+          if (!stale) setOsError(e instanceof Error ? e.message : "שגיאה");
+        } finally {
+          if (!stale) setOsLoading(false);
+        }
+      },
+      first && typed ? 350 : 0,
+    );
     return () => {
       stale = true;
       clearTimeout(handle);
     };
-    // refreshKey: אחרי הוספה או הסרה של פריט ברצף, הרשימה נטענת מחדש בלי הפריטים שכבר בו.
-  }, [tab, q, all, page, groupId, refreshKey]);
-
-  const primaryDone = loadedKey === searchKey && !osLoading && osCards.length >= osTotal;
-  const wantMore = tab === "os" && autoActive && primaryDone;
-
-  useEffect(() => {
-    if (!wantMore) return;
-    let stale = false;
-    (async () => {
-      setMoreLoading(true);
-      try {
-        const params = new URLSearchParams({ group: String(groupId), q: "", page: String(morePage) });
-        if (all) params.set("all", "1");
-        const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
-        if (stale) return;
-        const cards = toOsCards(data);
-        setMoreCards((prev) => (morePage === 1 ? cards : mergeCards(prev, cards)));
-        setMoreTotal(data.total);
-      } catch {
-        // ההמשך הוא תוספת בלבד; כשל כאן לא מסתיר את תוצאות החיפוש עצמן.
-      } finally {
-        if (!stale) setMoreLoading(false);
-      }
-    })();
-    return () => {
-      stale = true;
-    };
-  }, [wantMore, morePage, all, groupId, refreshKey]);
+    // tiers נגזר מ-tiersKey; refreshKey טוען מחדש אחרי הוספה או הסרה של פריט ברצף.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, tiersKey, cursor, groupId, refreshKey]);
 
   useEffect(() => {
     if (tab !== "mine") return;
@@ -843,26 +881,35 @@ function Warehouse({
   }
 
   // מה שכבר ברצף לא מוצג כאן בכלל (השרת מדלג עליו, וזו רשת ביטחון עד לטעינה הבאה).
-  const fresh = (cards: WhCard[]) => cards.filter((c) => !usedUrls.has(c.url));
-  const main = fresh(osCards);
-  const extra = wantMore ? fresh(moreCards).filter((c) => !main.some((m) => m.key === c.key)) : [];
-  const mineFresh = fresh(mine);
-  const loading = osLoading || moreLoading;
-  const canLoadMore = !loading && !osError && (osCards.length < osTotal || (wantMore && moreCards.length < moreTotal));
+  // פריט שהופיע בשכבה קודמת לא חוזר בשכבה שאחריה.
+  const seen = new Set<string>();
+  const sections = tiers.map((tier, i) => {
+    const cards = (lists[i] ?? []).filter((c) => !usedUrls.has(c.url) && !seen.has(c.key));
+    cards.forEach((c) => seen.add(c.key));
+    return { label: tier.label, cards };
+  });
+  const shownCount = sections.reduce((sum, s) => sum + s.cards.length, 0);
+  const mineFresh = mine.filter((c) => !usedUrls.has(c.url));
+
+  const settled = loadedFor === `${tiersKey}|${cursor.tier}|${cursor.page}` && !osLoading;
+  const tierDone = settled && (lists[cursor.tier]?.length ?? 0) >= (totals[cursor.tier] ?? 0);
+  const hasMore = settled && !osError && (!tierDone || cursor.tier < tiers.length - 1);
 
   const loadMore = useCallback(() => {
-    if (osCards.length < osTotal) setPage((p) => p + 1);
-    else setMorePage((p) => p + 1);
-  }, [osCards.length, osTotal]);
+    setCursor((c) => (tierDone ? { tier: c.tier + 1, page: 1 } : { tier: c.tier, page: c.page + 1 }));
+  }, [tierDone]);
 
   // גלילה עד סוף הרשימה טוענת את ההמשך.
   useEffect(() => {
     const el = sentinel.current;
-    if (!el || !canLoadMore || tab !== "os") return;
+    if (!el || !hasMore || tab !== "os") return;
     const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && loadMore(), { rootMargin: "200px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [canLoadMore, loadMore, tab]);
+  }, [hasMore, loadMore, tab]);
+
+  const relatedEmpty = autoActive && !typed && settled && cursor.tier > 0 && sections[0].cards.length === 0;
+  let rank = 0;
 
   return (
     <section className="mx-auto mt-8 flex max-w-[110rem] items-start gap-6">
@@ -895,7 +942,7 @@ function Warehouse({
                 <span className="truncate">לפי שם השיעור: {autoQuery}</span>
                 <button
                   className="btn-icon !p-1 ms-auto shrink-0"
-                  data-tip="חיפוש רחב יותר"
+                  data-tip="הצגת כל הכיתה והתחום"
                   aria-label="הסרת הסינון לפי שם השיעור"
                   onClick={() => setAutoOff(autoKey)}
                 >
@@ -928,29 +975,32 @@ function Warehouse({
       <div className="min-w-0 flex-1">
         {tab === "os" ? (
           <>
-            <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
-              {main.map((c, i) => (
-                <Butterfly key={c.key} card={c} rank={i} onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined} />
-              ))}
-            </div>
-            {extra.length > 0 && (
-              <>
-                {main.length > 0 && <p className="px-3 pt-5 text-xs text-muted">עוד מהכיתה ומהתחום</p>}
-                <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
-                  {extra.map((c, i) => (
-                    <Butterfly
-                      key={c.key}
-                      card={c}
-                      rank={main.length + i}
-                      onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined}
-                    />
-                  ))}
-                </div>
-              </>
+            {relatedEmpty && (
+              <p className="px-3 pt-1 text-sm text-muted">
+                לא נמצאו במאגר פריטים חדשים שקשורים לשיעור &quot;{autoQuery}&quot;. מה שכבר ברצף לא מוצג כאן.
+              </p>
+            )}
+            {sections.map(
+              (s, i) =>
+                s.cards.length > 0 && (
+                  <div key={i}>
+                    {s.label && <p className="px-3 pt-4 text-sm font-medium text-muted">{s.label}</p>}
+                    <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2">
+                      {s.cards.map((c) => (
+                        <Butterfly
+                          key={c.key}
+                          card={c}
+                          rank={rank++}
+                          onPreview={c.kind === "os" ? () => setPreview({ postId: c.postId, title: c.title }) : undefined}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ),
             )}
             {osError && <p className="px-3 text-coral text-sm">{osError}</p>}
-            {loading && <p className="text-muted text-sm text-center py-4">טוענים…</p>}
-            {!loading && !osError && main.length === 0 && extra.length === 0 && (
+            {(osLoading || !settled) && !osError && <p className="text-muted text-sm text-center py-4">טוענים…</p>}
+            {settled && !osError && !hasMore && shownCount === 0 && (
               <div className="py-8 flex flex-col items-center gap-2 text-center">
                 <p className="text-muted text-sm">לא נמצאו פריטים חדשים</p>
                 {!all && (
@@ -961,7 +1011,7 @@ function Warehouse({
               </div>
             )}
             <div ref={sentinel} className="h-px" />
-            {canLoadMore && (
+            {hasMore && (
               <div className="flex justify-center pt-3">
                 <button className="btn btn-ghost" onClick={loadMore}>
                   עוד
@@ -1520,6 +1570,9 @@ export default function Board({ groupId }: { groupId: number }) {
   // שם ברירת מחדל ("שיעור 3") לא מחפש כלום; שם אמיתי הופך לחיפוש במחסן.
   const autoQuery = /^שיעור\s*\d*$/.test(activeTitle) ? "" : activeTitle;
   const presentLesson = presenting != null ? (data.lessons.find((l) => l.id === presenting) ?? null) : null;
+  // שם ברירת מחדל של נושא ("נושא 2") לא עוזר לחיפוש.
+  const rawTopic = data.topics.find((t) => t.id === currentTopicId)?.name?.trim() ?? "";
+  const topicName = /^נושא\s*\d*$/.test(rawTopic) ? "" : rawTopic;
   const usedUrls = new Set([...data.lessons.flatMap((l) => l.items.map((x) => x.item.url)), ...data.crossItems.map((c) => c.item.url)]);
 
   return (
@@ -1623,6 +1676,9 @@ export default function Board({ groupId }: { groupId: number }) {
           lesson={presentLesson}
           number={visibleLessons.findIndex((l) => l.id === presentLesson.id) + 1}
           color={topicColor}
+          groupId={groupId}
+          groupName={group.name}
+          topicName={topicName}
           nextLesson={visibleLessons[visibleLessons.findIndex((l) => l.id === presentLesson.id) + 1] ?? null}
           onClose={() => {
             setPresenting(null);
@@ -1708,6 +1764,7 @@ export default function Board({ groupId }: { groupId: number }) {
           refreshKey={warehouseKey}
           autoQuery={autoQuery}
           autoKey={activeLesson}
+          topicName={topicName}
           onItemsChanged={bumpWarehouse}
         />
 

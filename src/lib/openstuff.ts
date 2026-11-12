@@ -58,10 +58,16 @@ export async function searchOpenstuff(opts: {
   subjectName?: string | null;
   page?: number;
   exclude?: number[];
+  related?: boolean;
+  topic?: string;
 }): Promise<{ cards: WarehouseCard[]; total: number }> {
   // נקודת החיפוש של תוסף הגשר: ממיינת מהפופולרי ומטה, ומדלגת על מה שכבר ברצף.
   const params = new URLSearchParams({ per_page: "24", page: String(opts.page ?? 1) });
   if (opts.q?.trim()) params.set("q", opts.q.trim());
+  if (opts.related) {
+    params.set("related", "1");
+    if (opts.topic?.trim()) params.set("topic", opts.topic.trim());
+  }
   if (opts.className) params.set("class", opts.className);
   if (opts.subjectName) params.set("subject", opts.subjectName);
   if (opts.exclude?.length) params.set("exclude", opts.exclude.slice(0, 500).join(","));

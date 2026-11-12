@@ -79,6 +79,9 @@ export type SafeResponse = {
   finalUrl: string;
   contentType: string;
   body: string;
+  // כותרות שקובעות אם מותר להציג את הדף בתוך מסגרת באתר אחר.
+  frameOptions: string;
+  csp: string;
 };
 
 function requestOnce(url: URL, accept: string): Promise<{
@@ -151,6 +154,8 @@ export async function safeFetch(rawUrl: string, accept = "text/html,*/*;q=0.8"):
       finalUrl: current.toString(),
       contentType: String(res.headers["content-type"] ?? ""),
       body: res.body,
+      frameOptions: String(res.headers["x-frame-options"] ?? ""),
+      csp: String(res.headers["content-security-policy"] ?? ""),
     };
   }
   throw new Error("יותר מדי הפניות");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Maximize,
   Minimize,
+  MonitorPlay,
   PanelRightClose,
   PanelRightOpen,
   Pause,
@@ -16,6 +17,7 @@ import {
   Timer,
   X,
 } from "lucide-react";
+import { chime, clock, DrawLayer, ToolButtons, ToolWindows } from "./board-lesson-tools";
 
 type ModeItem = {
   id: number;
@@ -38,27 +40,7 @@ type ModeLesson = { id: number; title: string; items: ModeItem[] };
 
 const MINUTES: Record<string, number> = { five: 5, quarter: 15, half: 30, lesson: 45, double: 90 };
 const DURATION_LABEL: Record<string, string> = { five: "חמש דקות", quarter: "רבע שעה", half: "חצי שעה", lesson: "שיעור", double: "שני שיעורים" };
-
-function clock(totalSeconds: number): string {
-  const s = Math.abs(Math.round(totalSeconds));
-  return `${totalSeconds < 0 ? "-" : ""}${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function youtubeId(url: string): string | null {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\.|^m\./, "");
-    if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
-    if (host === "youtube.com" || host === "youtube-nocookie.com") {
-      if (u.pathname === "/watch") return u.searchParams.get("v");
-      const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
-      return m ? m[1] : null;
-    }
-  } catch {
-    // כתובת לא תקינה פשוט לא מוטמעת.
-  }
-  return null;
-}
+const plannedSeconds = (li: ModeItem) => (li.duration ? (MINUTES[li.duration] ?? 0) * 60 : 0);
 
 function readShown(lessonId: number): number[] {
   try {
@@ -74,21 +56,29 @@ export default function LessonMode({
   lesson,
   number,
   color,
+  groupId,
+  groupName,
+  topicName,
   nextLesson,
   onClose,
 }: {
   lesson: ModeLesson;
   number: number;
   color: string;
+  groupId: number;
+  groupName: string;
+  topicName: string;
   nextLesson: { id: number; title: string } | null;
   onClose: () => void;
 }) {
   const items = lesson.items;
-  // idx === items.length הוא מסך הסיכום.
-  const [idx, setIdx] = useState(0);
+  // ‎-1 הוא שקופית הפתיחה, ו-items.length הוא מסך הסיכום.
+  const [idx, setIdx] = useState(-1);
   const [railOpen, setRailOpen] = useState(true);
   const [shown, setShown] = useState<Set<number>>(() => new Set(readShown(lesson.id)));
   const [links, setLinks] = useState<Record<number, string>>({});
+  // כתובת ההטמעה לכל פריט: undefined = עדיין בודקים, null = האתר לא מרשה הצגה בתוך הדף.
+  const [embeds, setEmbeds] = useState<Record<number, string | null>>({});
   const [embed, setEmbed] = useState(false);
   const [full, setFull] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -96,8 +86,12 @@ export default function LessonMode({
   const [itemStart, setItemStart] = useState(() => Date.now());
   const [pausedAt, setPausedAt] = useState<number | null>(null);
   const [moving, setMoving] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [tools, setTools] = useState<Set<string>>(() => new Set());
+  const [drawing, setDrawing] = useState(false);
+  const chimedFor = useRef<number | null>(null);
 
-  const current = idx < items.length ? items[idx] : null;
+  const current = idx >= 0 && idx < items.length ? items[idx] : null;
+  const lessonIsNamed = !/^שיעור\s*\d*$/.test(lesson.title.trim());
 
   // הקישור לפריט עצמו: לפריט מחומר פתוח הוא נשלף מהפוסט, כדי שבכיתה ייפתח התוכן ולא עמוד הפוסט.
   useEffect(() => {
@@ -108,14 +102,41 @@ export default function LessonMode({
       fetch(`/api/warehouse/preview/${postId}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { link?: string | null } | null) => {
-          if (!stale && d?.link) setLinks((prev) => ({ ...prev, [li.item.id]: d.link as string }));
+          if (stale) return;
+          // גם כשאין קישור בפוסט מסמנים שהבירור הסתיים, כדי שבדיקת ההטמעה תרוץ על כתובת הפוסט.
+          setLinks((prev) => ({ ...prev, [li.item.id]: d?.link || li.item.url }));
         })
-        .catch(() => {});
+        .catch(() => !stale && setLinks((prev) => ({ ...prev, [li.item.id]: li.item.url })));
     }
     return () => {
       stale = true;
     };
   }, [items]);
+
+  const directOf = useCallback(
+    (li: ModeItem): string | null => {
+      const needsLookup = li.item.kind === "openstuff" && li.item.openstuffPostId;
+      return needsLookup ? (links[li.item.id] ?? null) : li.item.url;
+    },
+    [links],
+  );
+
+  // בדיקה אם אפשר להציג את הפריט הנוכחי בתוך הדף (ספק מוכר, או אתר שלא אוסר הטמעה).
+  const direct = current ? directOf(current) : null;
+  const currentItemId = current?.item.id ?? null;
+  useEffect(() => {
+    if (currentItemId == null || !direct || embeds[currentItemId] !== undefined) return;
+    let stale = false;
+    fetch(`/api/embed?url=${encodeURIComponent(direct)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { embedUrl?: string | null } | null) => {
+        if (!stale) setEmbeds((prev) => ({ ...prev, [currentItemId]: d?.embedUrl ?? null }));
+      })
+      .catch(() => !stale && setEmbeds((prev) => ({ ...prev, [currentItemId]: null })));
+    return () => {
+      stale = true;
+    };
+  }, [currentItemId, direct, embeds]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -143,15 +164,16 @@ export default function LessonMode({
 
   const go = useCallback(
     (to: number) => {
-      const target = Math.max(0, Math.min(items.length, to));
+      const target = Math.max(-1, Math.min(items.length, to));
       setIdx((cur) => {
         // מעבר קדימה מסמן את הפריט שעזבנו כ"הוצג".
-        if (target > cur && cur < items.length) setShown((prev) => new Set(prev).add(items[cur].id));
+        if (target > cur && cur >= 0 && cur < items.length) setShown((prev) => new Set(prev).add(items[cur].id));
         return target;
       });
       setEmbed(false);
       setItemStart(Date.now());
       setPausedAt(null);
+      chimedFor.current = null;
     },
     [items],
   );
@@ -161,7 +183,7 @@ export default function LessonMode({
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       // בעברית "הבא" הוא שמאלה.
-      if (e.key === "ArrowLeft" || e.key === " " || e.key === "PageDown") {
+      if (e.key === "ArrowLeft" || e.key === "PageDown") {
         e.preventDefault();
         go(idx + 1);
       } else if (e.key === "ArrowRight" || e.key === "PageUp") {
@@ -189,6 +211,15 @@ export default function LessonMode({
     });
   }
 
+  function toggleTool(key: string) {
+    setTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   const leftovers = useMemo(() => items.filter((li) => !shown.has(li.id)), [items, shown]);
 
   async function moveLeftovers() {
@@ -210,14 +241,25 @@ export default function LessonMode({
     }
   }
 
-  const direct = current ? (links[current.item.id] ?? current.item.url) : "";
-  const yt = current ? youtubeId(direct) : null;
-  const planned = current?.duration ? (MINUTES[current.duration] ?? 0) * 60 : 0;
+  const openUrl = current ? (direct ?? current.item.url) : "";
+  const embedUrl = current ? embeds[current.item.id] : undefined;
+  const planned = current ? plannedSeconds(current) : 0;
   const tick = pausedAt ?? now;
   const itemElapsed = Math.max(0, (tick - itemStart) / 1000);
   const remaining = planned - itemElapsed;
-  const over = planned > 0 && remaining < 0;
-  const totalPlanned = items.reduce((sum, li) => sum + (li.duration ? (MINUTES[li.duration] ?? 0) : 0), 0);
+  const over = planned > 0 && remaining <= 0;
+  const totalPlanned = items.reduce((sum, li) => sum + plannedSeconds(li) / 60, 0);
+
+  // הזמן של הפריט נגמר: צליל עדין, פעם אחת, כתזכורת לעבור הלאה.
+  useEffect(() => {
+    if (current && over && pausedAt == null && chimedFor.current !== current.id) {
+      chimedFor.current = current.id;
+      chime();
+    }
+  }, [current, over, pausedAt]);
+
+  const today = useMemo(() => new Date().toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" }), []);
+  const markShown = () => current && setShown((prev) => new Set(prev).add(current.id));
 
   return (
     <div className="fixed inset-0 z-[120] flex bg-page" role="dialog" aria-label={`מצב שיעור: ${lesson.title}`}>
@@ -229,41 +271,63 @@ export default function LessonMode({
               {number}
             </span>
             <h2 className="min-w-0 flex-1 truncate text-lg font-extrabold">{lesson.title}</h2>
-            <button className="btn-icon" data-tip="הסתרת הסרגל" aria-label="הסתרת הסרגל" onClick={() => setRailOpen(false)}>
+            <button className="btn-icon" data-tip="הסתרת הסרגל" data-tip-pos="below" aria-label="הסתרת הסרגל" onClick={() => setRailOpen(false)}>
               <PanelRightClose size={18} strokeWidth={2} />
             </button>
           </div>
           <ol className="flex-1 overflow-y-auto px-3 pb-3 flex flex-col gap-1.5">
+            <li>
+              <button
+                type="button"
+                onClick={() => go(-1)}
+                className={`w-full rounded-2xl border p-2 text-start text-sm font-medium transition ${
+                  idx === -1 ? "border-blue bg-blue-soft" : "border-transparent text-muted hover:bg-page"
+                }`}
+              >
+                פתיחה
+              </button>
+            </li>
             {items.map((li, i) => {
               const active = i === idx;
               const done = shown.has(li.id);
+              const plan = plannedSeconds(li);
+              // הקו מתמלא לפי הזמן שתוכנן לפריט; פריט שהוצג נשאר מלא.
+              const fill = active && plan > 0 ? Math.min(1, itemElapsed / plan) : done ? 1 : 0;
               return (
                 <li key={li.id}>
                   <div
-                    className={`flex items-center gap-2 rounded-2xl border p-2 transition ${
-                      active ? "border-blue bg-blue-soft" : "border-transparent hover:bg-page"
-                    }`}
+                    className={`relative overflow-hidden rounded-2xl border transition ${active ? "border-blue bg-blue-soft" : "border-transparent hover:bg-page"}`}
                   >
-                    <button
-                      type="button"
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold tabular-nums transition ${
-                        done ? "border-green-600 bg-green-600 text-white" : "border-line bg-white text-muted hover:border-blue"
-                      }`}
-                      data-tip={done ? "הוצג. לחצו לביטול" : "סימון כהוצג"}
-                      aria-label={done ? "ביטול סימון הוצג" : "סימון כהוצג"}
-                      aria-pressed={done}
-                      onClick={() => toggleShown(li.id)}
-                    >
-                      {done ? <Check size={14} strokeWidth={2} /> : i + 1}
-                    </button>
-                    <button type="button" className="min-w-0 flex-1 text-start" onClick={() => go(i)} aria-current={active}>
-                      <span className={`block truncate text-sm ${active ? "font-bold" : "font-medium"} ${done && !active ? "text-muted" : ""}`}>
-                        {li.item.title}
-                      </span>
-                      <span className="block truncate text-[0.7rem] text-muted">
-                        {[li.item.contentType, li.phase, li.duration ? DURATION_LABEL[li.duration] : null].filter(Boolean).join(" · ")}
-                      </span>
-                    </button>
+                    <div className="flex items-center gap-2 p-2">
+                      <button
+                        type="button"
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold tabular-nums transition ${
+                          done ? "border-green-600 bg-green-600 text-white" : "border-line bg-white text-muted hover:border-blue"
+                        }`}
+                        data-tip={done ? "הוצג. לחצו לביטול" : "סימון כהוצג"}
+                        aria-label={done ? "ביטול סימון הוצג" : "סימון כהוצג"}
+                        aria-pressed={done}
+                        onClick={() => toggleShown(li.id)}
+                      >
+                        {done ? <Check size={14} strokeWidth={2} /> : i + 1}
+                      </button>
+                      <button type="button" className="min-w-0 flex-1 text-start" onClick={() => go(i)} aria-current={active}>
+                        <span className={`block truncate text-sm ${active ? "font-bold" : "font-medium"} ${done && !active ? "text-muted" : ""}`}>
+                          {li.item.title}
+                        </span>
+                        <span className="block truncate text-[0.7rem] text-muted">
+                          {[li.item.contentType, li.phase, li.duration ? DURATION_LABEL[li.duration] : null].filter(Boolean).join(" · ")}
+                        </span>
+                      </button>
+                    </div>
+                    {plan > 0 && (
+                      <div className="absolute inset-x-0 bottom-0 h-1 bg-line/60" aria-hidden>
+                        <div
+                          className={`h-full ms-0 transition-[width] duration-1000 ease-linear ${active ? (fill >= 1 ? "bg-coral" : "bg-blue") : "bg-green-600/50"}`}
+                          style={{ width: `${fill * 100}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 </li>
               );
@@ -285,24 +349,24 @@ export default function LessonMode({
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* שורת בקרה */}
-        <div className="flex items-center gap-2 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3">
           {!railOpen && (
-            <button className="btn-icon bg-white border border-line" data-tip="פריטי השיעור" aria-label="הצגת הסרגל" onClick={() => setRailOpen(true)}>
+            <button className="btn-icon bg-white border border-line" data-tip="פריטי השיעור" data-tip-pos="below" aria-label="הצגת הסרגל" onClick={() => setRailOpen(true)}>
               <PanelRightOpen size={18} strokeWidth={2} />
             </button>
           )}
           <span
             className="inline-flex items-center gap-1.5 rounded-full bg-white border border-line px-3 py-1.5 text-sm tabular-nums"
+            data-tip-pos="below"
             data-tip={totalPlanned ? `זמן מתחילת השיעור. התכנון: כ־${totalPlanned} דקות` : "זמן מתחילת השיעור"}
           >
             <Timer size={15} strokeWidth={2} />
             {clock((now - lessonStart) / 1000)}
           </span>
-          <span className="text-sm text-muted tabular-nums">
-            {current ? `${idx + 1} מתוך ${items.length}` : "סיכום"}
-          </span>
+          <span className="text-sm text-muted tabular-nums">{current ? `${idx + 1} מתוך ${items.length}` : idx === -1 ? "פתיחה" : "סיכום"}</span>
           <div className="ms-auto flex items-center gap-2">
-            <button className="btn-icon bg-white border border-line" data-tip={full ? "יציאה ממסך מלא" : "מסך מלא"} aria-label="מסך מלא" onClick={toggleFull}>
+            <ToolButtons open={tools} onToggle={toggleTool} drawing={drawing} onDraw={() => setDrawing((v) => !v)} />
+            <button className="btn-icon bg-white border border-line" data-tip={full ? "יציאה ממסך מלא" : "מסך מלא"} data-tip-pos="below" aria-label="מסך מלא" onClick={toggleFull}>
               {full ? <Minimize size={18} strokeWidth={2} /> : <Maximize size={18} strokeWidth={2} />}
             </button>
             <button className="btn btn-ghost" onClick={onClose}>
@@ -312,93 +376,136 @@ export default function LessonMode({
         </div>
 
         {/* הבמה */}
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-4">
-          {current ? (
-            embed && yt ? (
-              <div className="aspect-video w-full max-w-6xl overflow-hidden rounded-3xl bg-ink shadow-xl">
-                <iframe
-                  className="h-full w-full"
-                  src={`https://www.youtube-nocookie.com/embed/${yt}?rel=0&autoplay=1`}
-                  title={current.item.title}
-                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                  allowFullScreen
-                />
-              </div>
-            ) : (
-              <div className="flex w-full max-w-5xl flex-col items-center gap-6 md:flex-row md:items-stretch">
-                {current.item.imageUrl && (
-                  <div className="w-full max-w-md shrink-0 overflow-hidden rounded-3xl border border-line bg-white shadow-sm">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={current.item.imageUrl} alt="" className="h-full max-h-[50vh] w-full object-cover" draggable={false} />
-                  </div>
-                )}
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-4">
-                  <p className="text-sm text-muted">
-                    {[current.item.contentType, current.phase, current.isAssignment ? "מטלת הגשה" : null].filter(Boolean).join(" · ")}
+        <div className="relative flex min-h-0 flex-1">
+          {current && embed && embedUrl ? (
+            <div className="absolute inset-0 px-5 pb-3">
+              <iframe
+                key={embedUrl}
+                className="h-full w-full rounded-3xl border border-line bg-white shadow-sm"
+                src={embedUrl}
+                title={current.item.title}
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write"
+                allowFullScreen
+                // התוכן המוטמע לא רשאי להחליף את הדף של מצב השיעור.
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-4">
+              {idx === -1 ? (
+                <div className="flex w-full max-w-4xl flex-col items-center gap-5 text-center">
+                  <p className="text-xl text-muted">
+                    {groupName} · {today}
                   </p>
-                  <h1 className="text-4xl font-extrabold leading-tight">{current.item.title}</h1>
-                  {current.note && <p className="whitespace-pre-wrap rounded-2xl bg-white border border-line p-4 text-lg leading-relaxed">{current.note}</p>}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <a
-                      className="btn btn-primary !px-6 !py-3 text-lg"
-                      href={direct}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => setShown((prev) => new Set(prev).add(current.id))}
-                    >
-                      <ExternalLink size={20} strokeWidth={2} /> פתיחה
-                    </a>
-                    {yt && (
-                      <button
-                        className="btn btn-ghost !px-5 !py-3 text-lg"
-                        onClick={() => {
-                          setEmbed(true);
-                          setShown((prev) => new Set(prev).add(current.id));
-                        }}
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-14 w-14 items-center justify-center rounded-full text-2xl font-extrabold text-white" style={{ background: color }}>
+                      {number}
+                    </span>
+                    <p className="text-2xl font-bold">שיעור מספר {number}</p>
+                  </div>
+                  <h1 className="text-6xl font-extrabold leading-tight">{lessonIsNamed ? lesson.title : topicName || lesson.title}</h1>
+                  {topicName && lessonIsNamed && (
+                    <p className="rounded-full px-5 py-2 text-xl font-medium text-white" style={{ background: color }}>
+                      {topicName}
+                    </p>
+                  )}
+                  {items.length > 0 && (
+                    <ol className="mt-2 flex max-w-2xl flex-col gap-1.5 text-start text-lg">
+                      {items.slice(0, 7).map((li, i) => (
+                        <li key={li.id} className="flex items-baseline gap-3">
+                          <span className="w-6 shrink-0 text-end text-muted tabular-nums">{i + 1}</span>
+                          <span className="min-w-0 truncate">{li.item.title}</span>
+                        </li>
+                      ))}
+                      {items.length > 7 && <li className="ps-9 text-muted">ועוד {items.length - 7}</li>}
+                    </ol>
+                  )}
+                  <button className="btn btn-primary !px-6 !py-3 text-lg" onClick={() => go(0)}>
+                    מתחילים <ArrowLeft size={20} strokeWidth={2} />
+                  </button>
+                </div>
+              ) : current ? (
+                <div className="flex w-full max-w-5xl flex-col items-center gap-6 md:flex-row md:items-stretch">
+                  {current.item.imageUrl && (
+                    <div className="w-full max-w-md shrink-0 overflow-hidden rounded-3xl border border-line bg-white shadow-sm">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={current.item.imageUrl} alt="" className="h-full max-h-[50vh] w-full object-cover" draggable={false} />
+                    </div>
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col justify-center gap-4">
+                    <p className="text-sm text-muted">
+                      {[current.item.contentType, current.phase, current.isAssignment ? "מטלת הגשה" : null].filter(Boolean).join(" · ")}
+                    </p>
+                    <h1 className="text-4xl font-extrabold leading-tight">{current.item.title}</h1>
+                    {current.note && <p className="whitespace-pre-wrap rounded-2xl bg-white border border-line p-4 text-lg leading-relaxed">{current.note}</p>}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {embedUrl && (
+                        <button
+                          className="btn btn-primary !px-6 !py-3 text-lg"
+                          onClick={() => {
+                            setEmbed(true);
+                            markShown();
+                          }}
+                        >
+                          <MonitorPlay size={20} strokeWidth={2} /> הצגה כאן
+                        </button>
+                      )}
+                      <a
+                        className={`btn ${embedUrl ? "btn-ghost" : "btn-primary"} !px-6 !py-3 text-lg`}
+                        href={openUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={markShown}
                       >
-                        <Play size={20} strokeWidth={2} /> הצגה כאן
-                      </button>
-                    )}
+                        <ExternalLink size={20} strokeWidth={2} /> פתיחה בלשונית
+                      </a>
+                    </div>
+                    {embedUrl === null && <p className="text-sm text-muted">האתר הזה לא מאפשר הצגה בתוך הדף, ולכן הוא ייפתח בלשונית נפרדת.</p>}
+                    {embedUrl === undefined && <p className="text-sm text-muted">בודקים אם אפשר להציג כאן…</p>}
                   </div>
                 </div>
-              </div>
-            )
-          ) : (
-            <div className="flex w-full max-w-xl flex-col gap-4 rounded-3xl border border-line bg-white p-8 text-center shadow-sm">
-              <h1 className="text-3xl font-extrabold">סיימנו את השיעור</h1>
-              <p className="text-muted tabular-nums">
-                הוצגו {items.length - leftovers.length} מתוך {items.length} פריטים, ב־{clock((now - lessonStart) / 1000)} דקות.
-              </p>
-              {leftovers.length > 0 && (
-                <div className="flex flex-col gap-2 text-start">
-                  <p className="text-sm font-medium">לא הספקנו:</p>
-                  <ul className="flex flex-col gap-1">
-                    {leftovers.map((li) => (
-                      <li key={li.id} className="truncate rounded-xl bg-page px-3 py-2 text-sm">
-                        {li.item.title}
-                      </li>
-                    ))}
-                  </ul>
-                  {nextLesson && moving !== "done" && (
-                    <button className="btn btn-primary justify-center" disabled={moving === "busy"} onClick={moveLeftovers}>
-                      <ArrowLeft size={16} strokeWidth={2} />
-                      {moving === "busy" ? "מעבירים…" : `העברה לשיעור הבא: ${nextLesson.title}`}
-                    </button>
+              ) : (
+                <div className="flex w-full max-w-xl flex-col gap-4 rounded-3xl border border-line bg-white p-8 text-center shadow-sm">
+                  <h1 className="text-3xl font-extrabold">סיימנו את השיעור</h1>
+                  <p className="text-muted tabular-nums">
+                    הוצגו {items.length - leftovers.length} מתוך {items.length} פריטים, ב־{clock((now - lessonStart) / 1000)} דקות.
+                  </p>
+                  {leftovers.length > 0 && (
+                    <div className="flex flex-col gap-2 text-start">
+                      <p className="text-sm font-medium">לא הספקנו:</p>
+                      <ul className="flex flex-col gap-1">
+                        {leftovers.map((li) => (
+                          <li key={li.id} className="truncate rounded-xl bg-page px-3 py-2 text-sm">
+                            {li.item.title}
+                          </li>
+                        ))}
+                      </ul>
+                      {nextLesson && moving !== "done" && (
+                        <button className="btn btn-primary justify-center" disabled={moving === "busy"} onClick={moveLeftovers}>
+                          <ArrowLeft size={16} strokeWidth={2} />
+                          {moving === "busy" ? "מעבירים…" : `העברה לשיעור הבא: ${nextLesson.title}`}
+                        </button>
+                      )}
+                      {moving === "done" && <p className="text-sm text-green-700">הפריטים עברו לשיעור הבא.</p>}
+                      {moving === "error" && <p className="text-sm text-coral">ההעברה נכשלה. אפשר לגרור אותם בלוח.</p>}
+                    </div>
                   )}
-                  {moving === "done" && <p className="text-sm text-green-700">הפריטים עברו לשיעור הבא.</p>}
-                  {moving === "error" && <p className="text-sm text-coral">ההעברה נכשלה. אפשר לגרור אותם בלוח.</p>}
+                  <button className="btn btn-ghost justify-center" onClick={onClose}>
+                    חזרה לרצף
+                  </button>
                 </div>
               )}
-              <button className="btn btn-ghost justify-center" onClick={onClose}>
-                חזרה לרצף
-              </button>
             </div>
           )}
+
+          <DrawLayer active={drawing} pageKey={`${lesson.id}:${idx}:${embed ? "e" : "c"}`} fileName={`לוח - ${lesson.title}`} />
+          <ToolWindows open={tools} onClose={toggleTool} groupId={groupId} />
         </div>
 
         {/* ניווט וטיימר הפריט */}
         <div className="flex items-center gap-3 border-t border-line bg-white px-5 py-3">
-          <button className="btn btn-ghost" disabled={idx === 0} onClick={() => go(idx - 1)}>
+          <button className="btn btn-ghost" disabled={idx <= -1} onClick={() => go(idx - 1)}>
             <ArrowRight size={18} strokeWidth={2} /> הקודם
           </button>
 
@@ -434,6 +541,7 @@ export default function LessonMode({
                   onClick={() => {
                     setItemStart(Date.now());
                     setPausedAt(null);
+                    chimedFor.current = null;
                   }}
                 >
                   <RotateCcw size={18} strokeWidth={2} />
@@ -441,14 +549,19 @@ export default function LessonMode({
               </>
             )}
             {embed && (
-              <button className="btn btn-ghost" onClick={() => setEmbed(false)}>
-                חזרה לפרטי הפריט
-              </button>
+              <>
+                <button className="btn btn-ghost" onClick={() => setEmbed(false)}>
+                  חזרה לפרטי הפריט
+                </button>
+                <a className="btn-icon" href={openUrl} target="_blank" rel="noopener noreferrer" data-tip="פתיחה בלשונית נפרדת" aria-label="פתיחה בלשונית נפרדת">
+                  <ExternalLink size={18} strokeWidth={2} />
+                </a>
+              </>
             )}
           </div>
 
           <button className="btn btn-primary" disabled={idx >= items.length} onClick={() => go(idx + 1)}>
-            {idx === items.length - 1 ? "סיכום" : "הבא"} <ArrowLeft size={18} strokeWidth={2} />
+            {idx === items.length - 1 ? "סיכום" : idx === -1 ? "מתחילים" : "הבא"} <ArrowLeft size={18} strokeWidth={2} />
           </button>
         </div>
       </div>

@@ -16,6 +16,9 @@ export async function GET(req: NextRequest) {
         className: sp.get("all") === "1" ? null : ctx.className,
         subjectName: sp.get("all") === "1" ? null : ctx.subjectName,
         page,
+        // related=1: פריטים שקשורים לשם השיעור ולשם הנושא (מספיק שמילה אחת מופיעה).
+        related: sp.get("related") === "1",
+        topic: sp.get("topic") ?? "",
         exclude: await usedPostIds(ctx.id),
       });
     } catch {
