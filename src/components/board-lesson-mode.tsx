@@ -6,18 +6,23 @@ import {
   ArrowRight,
   Check,
   ExternalLink,
+  FileText,
+  Loader2,
   Maximize,
   Minimize,
   MonitorPlay,
+  Moon,
   PanelRightClose,
   PanelRightOpen,
   Pause,
+  Pencil,
   Play,
+  Plus,
   RotateCcw,
   Timer,
   X,
 } from "lucide-react";
-import { chime, clock, DrawLayer, ToolButtons, ToolWindows } from "./board-lesson-tools";
+import { chime, clock, DrawLayer, ToolButtons, ToolWindows, useToolWindows } from "./board-lesson-tools";
 
 type ModeItem = {
   id: number;
@@ -36,7 +41,107 @@ type ModeItem = {
     openstuffPostId: number | null;
   };
 };
-type ModeLesson = { id: number; title: string; items: ModeItem[] };
+type ModeLesson = { id: number; title: string; goals?: string; recap?: string; items: ModeItem[] };
+
+const lines = (text: string) =>
+  text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// בלוק נקודות שהמורה עורך במקום ("מה נלמד היום" / "אז מה למדנו"). הבקרים שקטים, כי המסך מוקרן לכיתה.
+function NotesBlock({
+  title,
+  addLabel,
+  value,
+  onSave,
+  large,
+}: {
+  title: string;
+  addLabel: string;
+  value: string;
+  onSave: (text: string) => Promise<boolean>;
+  large?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [failed, setFailed] = useState(false);
+  const committed = useRef(false);
+  const points = lines(value);
+
+  function start() {
+    committed.current = false;
+    setDraft(value);
+    setFailed(false);
+    setEditing(true);
+  }
+  // שמירה בעזיבת השדה או בכפתור; הדגל מונע שמירה כפולה.
+  async function commit() {
+    if (committed.current) return;
+    committed.current = true;
+    setEditing(false);
+    if (draft.trim() === value.trim()) return;
+    const ok = await onSave(draft);
+    if (!ok) {
+      // נכשל: חוזרים לעריכה עם הטקסט, כדי שלא יאבד.
+      committed.current = false;
+      setFailed(true);
+      setEditing(true);
+    }
+  }
+
+  if (editing)
+    return (
+      <div className="flex w-full flex-col gap-2 text-start">
+        <p className="text-sm font-bold">{title}</p>
+        <textarea
+          autoFocus
+          className="block min-h-28 w-full resize-y rounded-2xl border border-line bg-white px-4 py-3 text-lg outline-none focus:border-blue"
+          placeholder="שורה לכל נקודה"
+          value={draft}
+          maxLength={1500}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              committed.current = true;
+              setEditing(false);
+            }
+          }}
+          aria-label={title}
+        />
+        <div className="flex items-center gap-2">
+          <button className="btn btn-primary" onMouseDown={(e) => e.preventDefault()} onClick={commit}>
+            <Check size={16} strokeWidth={2} /> שמירה
+          </button>
+          {failed && <span className="text-sm text-coral">השמירה נכשלה. אפשר לנסות שוב.</span>}
+        </div>
+      </div>
+    );
+
+  if (points.length === 0)
+    return (
+      <button type="button" className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-muted/60 transition hover:bg-white hover:text-muted focus-visible:text-muted" onClick={start}>
+        <Plus size={15} strokeWidth={2} /> {addLabel}
+      </button>
+    );
+
+  return (
+    <div className="group flex w-full flex-col gap-2 text-start">
+      <div className="flex items-center gap-2">
+        <h2 className={`font-extrabold ${large ? "text-2xl" : "text-lg"}`}>{title}</h2>
+        <button className="btn-icon !p-1.5 opacity-30 transition hover:opacity-100 focus-visible:opacity-100" data-tip="עריכה" aria-label={`עריכת ${title}`} onClick={start}>
+          <Pencil size={15} strokeWidth={2} />
+        </button>
+      </div>
+      <ul className={`flex list-disc flex-col gap-1.5 ps-6 marker:text-blue ${large ? "text-2xl" : "text-base"}`}>
+        {points.map((p, i) => (
+          <li key={i}>{p}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 const MINUTES: Record<string, number> = { five: 5, quarter: 15, half: 30, lesson: 45, double: 90 };
 const DURATION_LABEL: Record<string, string> = { five: "חמש דקות", quarter: "רבע שעה", half: "חצי שעה", lesson: "שיעור", double: "שני שיעורים" };
@@ -79,14 +184,18 @@ export default function LessonMode({
   const [links, setLinks] = useState<Record<number, string>>({});
   // כתובת ההטמעה לכל פריט: undefined = עדיין בודקים, null = האתר לא מרשה הצגה בתוך הדף.
   const [embeds, setEmbeds] = useState<Record<number, string | null>>({});
-  const [embed, setEmbed] = useState(false);
+  // כשלפריט יש הטמעה היא מוצגת מיד; "פרטי הפריט" מחליף זמנית לכרטיס הפרטים.
+  const [details, setDetails] = useState(false);
+  const [dark, setDark] = useState(false);
+  const [goals, setGoals] = useState(lesson.goals ?? "");
+  const [recap, setRecap] = useState(lesson.recap ?? "");
   const [full, setFull] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [lessonStart] = useState(() => Date.now());
   const [itemStart, setItemStart] = useState(() => Date.now());
   const [pausedAt, setPausedAt] = useState<number | null>(null);
   const [moving, setMoving] = useState<"idle" | "busy" | "done" | "error">("idle");
-  const [tools, setTools] = useState<Set<string>>(() => new Set());
+  const toolState = useToolWindows(groupId);
   const [drawing, setDrawing] = useState(false);
   const chimedFor = useRef<number | null>(null);
 
@@ -124,19 +233,23 @@ export default function LessonMode({
   // בדיקה אם אפשר להציג את הפריט הנוכחי בתוך הדף (ספק מוכר, או אתר שלא אוסר הטמעה).
   const direct = current ? directOf(current) : null;
   const currentItemId = current?.item.id ?? null;
+  const currentLiId = current?.id ?? null;
   useEffect(() => {
     if (currentItemId == null || !direct || embeds[currentItemId] !== undefined) return;
     let stale = false;
     fetch(`/api/embed?url=${encodeURIComponent(direct)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { embedUrl?: string | null } | null) => {
-        if (!stale) setEmbeds((prev) => ({ ...prev, [currentItemId]: d?.embedUrl ?? null }));
+        if (stale) return;
+        setEmbeds((prev) => ({ ...prev, [currentItemId]: d?.embedUrl ?? null }));
+        // הפריט מוצג בתוך הדף מיד כשההטמעה מוכנה, ולכן הוא נחשב "הוצג".
+        if (d?.embedUrl && currentLiId != null) setShown((prev) => new Set(prev).add(currentLiId));
       })
       .catch(() => !stale && setEmbeds((prev) => ({ ...prev, [currentItemId]: null })));
     return () => {
       stale = true;
     };
-  }, [currentItemId, direct, embeds]);
+  }, [currentItemId, currentLiId, direct, embeds]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -170,7 +283,7 @@ export default function LessonMode({
         if (target > cur && cur >= 0 && cur < items.length) setShown((prev) => new Set(prev).add(items[cur].id));
         return target;
       });
-      setEmbed(false);
+      setDetails(false);
       setItemStart(Date.now());
       setPausedAt(null);
       chimedFor.current = null;
@@ -180,6 +293,14 @@ export default function LessonMode({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // במצב חושך רק Esc פעיל: הוא מחזיר את המסך ולא סוגר את מצב השיעור.
+      if (dark) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setDark(false);
+        }
+        return;
+      }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       // בעברית "הבא" הוא שמאלה.
@@ -195,7 +316,7 @@ export default function LessonMode({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, idx, onClose]);
+  }, [go, idx, onClose, dark]);
 
   function toggleFull() {
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
@@ -211,13 +332,21 @@ export default function LessonMode({
     });
   }
 
-  function toggleTool(key: string) {
-    setTools((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // שמירה מיידית בתצוגה; הפונקציה מחזירה אם השרת אישר.
+  async function saveNotes(field: "goals" | "recap", text: string): Promise<boolean> {
+    const clean = text.trim();
+    if (field === "goals") setGoals(clean);
+    else setRecap(clean);
+    try {
+      const res = await fetch(`/api/lessons/${lesson.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ [field]: clean }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   const leftovers = useMemo(() => items.filter((li) => !shown.has(li.id)), [items, shown]);
@@ -243,6 +372,7 @@ export default function LessonMode({
 
   const openUrl = current ? (direct ?? current.item.url) : "";
   const embedUrl = current ? embeds[current.item.id] : undefined;
+  const embedded = Boolean(current && embedUrl && !details);
   const planned = current ? plannedSeconds(current) : 0;
   const tick = pausedAt ?? now;
   const itemElapsed = Math.max(0, (tick - itemStart) / 1000);
@@ -320,6 +450,7 @@ export default function LessonMode({
                         </span>
                       </button>
                     </div>
+                    {active && embedded && li.note && <p className="whitespace-pre-wrap px-3 pb-3 text-xs leading-relaxed text-muted">{li.note}</p>}
                     {plan > 0 && (
                       <div className="absolute inset-x-0 bottom-0 h-1 bg-line/60" aria-hidden>
                         <div
@@ -365,7 +496,7 @@ export default function LessonMode({
           </span>
           <span className="text-sm text-muted tabular-nums">{current ? `${idx + 1} מתוך ${items.length}` : idx === -1 ? "פתיחה" : "סיכום"}</span>
           <div className="ms-auto flex items-center gap-2">
-            <ToolButtons open={tools} onToggle={toggleTool} drawing={drawing} onDraw={() => setDrawing((v) => !v)} />
+            <ToolButtons open={toolState.open} onToggle={toolState.toggle} drawing={drawing} onDraw={() => setDrawing((v) => !v)} onBlackout={() => setDark(true)} />
             <button className="btn-icon bg-white border border-line" data-tip={full ? "יציאה ממסך מלא" : "מסך מלא"} data-tip-pos="below" aria-label="מסך מלא" onClick={toggleFull}>
               {full ? <Minimize size={18} strokeWidth={2} /> : <Maximize size={18} strokeWidth={2} />}
             </button>
@@ -377,7 +508,7 @@ export default function LessonMode({
 
         {/* הבמה */}
         <div className="relative flex min-h-0 flex-1">
-          {current && embed && embedUrl ? (
+          {current && embedded && embedUrl ? (
             <div className="absolute inset-0 px-5 pb-3">
               <iframe
                 key={embedUrl}
@@ -410,8 +541,11 @@ export default function LessonMode({
                       {topicName}
                     </p>
                   )}
+                  <div className="mt-2 w-full max-w-2xl">
+                    <NotesBlock title="מה נלמד היום" addLabel="הוספת מה נלמד היום" value={goals} onSave={(t) => saveNotes("goals", t)} large />
+                  </div>
                   {items.length > 0 && (
-                    <ol className="mt-2 flex max-w-2xl flex-col gap-1.5 text-start text-lg">
+                    <ol className={`flex max-w-2xl flex-col gap-1.5 text-start ${lines(goals).length ? "text-sm text-muted" : "mt-2 text-lg"}`}>
                       {items.slice(0, 7).map((li, i) => (
                         <li key={li.id} className="flex items-baseline gap-3">
                           <span className="w-6 shrink-0 text-end text-muted tabular-nums">{i + 1}</span>
@@ -425,15 +559,22 @@ export default function LessonMode({
                     מתחילים <ArrowLeft size={20} strokeWidth={2} />
                   </button>
                 </div>
+              ) : current && embedUrl === undefined ? (
+                // עדיין בודקים אם אפשר להציג בתוך הדף
+                <div className="flex flex-col items-center gap-3 text-center" role="status">
+                  <Loader2 size={36} strokeWidth={2} className="animate-spin text-blue" />
+                  <h1 className="max-w-xl text-2xl font-bold">{current.item.title}</h1>
+                  <p className="text-sm text-muted">טוענים את הפריט…</p>
+                </div>
               ) : current ? (
-                <div className="flex w-full max-w-5xl flex-col items-center gap-6 md:flex-row md:items-stretch">
+                <div className="flex w-full max-w-7xl flex-col items-center gap-6 md:flex-row md:items-stretch">
                   {current.item.imageUrl && (
-                    <div className="w-full max-w-md shrink-0 overflow-hidden rounded-3xl border border-line bg-white shadow-sm">
+                    <div className="flex w-full min-w-0 flex-1 items-center justify-center overflow-hidden rounded-3xl border border-line bg-white p-3 shadow-sm">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={current.item.imageUrl} alt="" className="h-full max-h-[50vh] w-full object-cover" draggable={false} />
+                      <img src={current.item.imageUrl} alt="" className="max-h-[70vh] w-full rounded-2xl object-contain" draggable={false} />
                     </div>
                   )}
-                  <div className="flex min-w-0 flex-1 flex-col justify-center gap-4">
+                  <div className={`flex min-w-0 flex-col justify-center gap-4 ${current.item.imageUrl ? "w-full md:w-96 md:shrink-0" : "max-w-3xl flex-1"}`}>
                     <p className="text-sm text-muted">
                       {[current.item.contentType, current.phase, current.isAssignment ? "מטלת הגשה" : null].filter(Boolean).join(" · ")}
                     </p>
@@ -441,14 +582,8 @@ export default function LessonMode({
                     {current.note && <p className="whitespace-pre-wrap rounded-2xl bg-white border border-line p-4 text-lg leading-relaxed">{current.note}</p>}
                     <div className="flex flex-wrap items-center gap-2">
                       {embedUrl && (
-                        <button
-                          className="btn btn-primary !px-6 !py-3 text-lg"
-                          onClick={() => {
-                            setEmbed(true);
-                            markShown();
-                          }}
-                        >
-                          <MonitorPlay size={20} strokeWidth={2} /> הצגה כאן
+                        <button className="btn btn-primary !px-6 !py-3 text-lg" onClick={() => setDetails(false)}>
+                          <MonitorPlay size={20} strokeWidth={2} /> חזרה להצגה
                         </button>
                       )}
                       <a
@@ -462,12 +597,12 @@ export default function LessonMode({
                       </a>
                     </div>
                     {embedUrl === null && <p className="text-sm text-muted">האתר הזה לא מאפשר הצגה בתוך הדף, ולכן הוא ייפתח בלשונית נפרדת.</p>}
-                    {embedUrl === undefined && <p className="text-sm text-muted">בודקים אם אפשר להציג כאן…</p>}
                   </div>
                 </div>
               ) : (
                 <div className="flex w-full max-w-xl flex-col gap-4 rounded-3xl border border-line bg-white p-8 text-center shadow-sm">
                   <h1 className="text-3xl font-extrabold">סיימנו את השיעור</h1>
+                  <NotesBlock title="אז מה למדנו" addLabel="הוספת אז מה למדנו" value={recap} onSave={(t) => saveNotes("recap", t)} large />
                   <p className="text-muted tabular-nums">
                     הוצגו {items.length - leftovers.length} מתוך {items.length} פריטים, ב־{clock((now - lessonStart) / 1000)} דקות.
                   </p>
@@ -499,8 +634,8 @@ export default function LessonMode({
             </div>
           )}
 
-          <DrawLayer active={drawing} pageKey={`${lesson.id}:${idx}:${embed ? "e" : "c"}`} fileName={`לוח - ${lesson.title}`} />
-          <ToolWindows open={tools} onClose={toggleTool} groupId={groupId} />
+          <DrawLayer active={drawing} pageKey={`${lesson.id}:${idx}:${embedded ? "e" : "c"}`} fileName={`לוח - ${lesson.title}`} lessonId={lesson.id} />
+          <ToolWindows state={toolState} groupId={groupId} />
         </div>
 
         {/* ניווט וטיימר הפריט */}
@@ -548,10 +683,10 @@ export default function LessonMode({
                 </button>
               </>
             )}
-            {embed && (
+            {current && embedUrl && (
               <>
-                <button className="btn btn-ghost" onClick={() => setEmbed(false)}>
-                  חזרה לפרטי הפריט
+                <button className={`btn btn-ghost ${details ? "!bg-blue-soft !text-blue-dark" : ""}`} aria-pressed={details} onClick={() => setDetails((v) => !v)}>
+                  <FileText size={16} strokeWidth={2} /> פרטי הפריט
                 </button>
                 <a className="btn-icon" href={openUrl} target="_blank" rel="noopener noreferrer" data-tip="פתיחה בלשונית נפרדת" aria-label="פתיחה בלשונית נפרדת">
                   <ExternalLink size={18} strokeWidth={2} />
@@ -565,6 +700,24 @@ export default function LessonMode({
           </button>
         </div>
       </div>
+
+      {/* חושך: מכסה הכול עד לחיצה על הכפתור העמום או Esc. הטיימרים ממשיכים לרוץ מאחור */}
+      {dark && (
+        <div className="fixed inset-0 z-[300] bg-black">
+          <div className="fixed bottom-3 left-3">
+            <button
+              type="button"
+              autoFocus
+              className="flex h-9 w-9 items-center justify-center rounded-full text-white opacity-15 transition hover:opacity-80 focus-visible:opacity-80"
+              aria-label="החזרת המסך"
+              title="החזרת המסך"
+              onClick={() => setDark(false)}
+            >
+              <Moon size={18} strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -50,6 +50,13 @@
       "when": 1792755628626,
       "tag": "0006_spotty_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794476729666,
+      "tag": "0007_exotic_amphibian",
+      "breakpoints": true
     }
   ]
 }

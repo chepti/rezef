@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Clock, ExternalLink, Eye, Heart, MessageCircle, Star, Users, X } from "lucide-react";
+import { Check, ExternalLink, Eye, Heart, Layers, MessageCircle, Star, X } from "lucide-react";
 
 type Preview = {
   id: number;
@@ -10,6 +10,10 @@ type Preview = {
   image: string | null;
   intro: string;
   author: string;
+  // היוצר המקורי של החומר; עלול להיעדר בתשובות ישנות שבמטמון.
+  credit?: string;
+  tags?: string[];
+  date?: string;
   platform: string;
   host: string;
   category: string | null;
@@ -25,13 +29,37 @@ type Preview = {
   rezefUsage: { sequences: number | null; notes: Array<{ text: string; author: string }> } | null;
 };
 
-function Stat({ icon: Icon, value, tip }: { icon: React.ComponentType<{ size?: number; strokeWidth?: number }>; value: string | number; tip: string }) {
+// אפס מוצג עמום, כדי שיהיה ברור שהנתון קיים ופשוט עדיין ריק.
+function Stat({
+  icon: Icon,
+  value,
+  tip,
+  dim,
+}: {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  value: string | number;
+  tip: string;
+  dim?: boolean;
+}) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-page px-3 py-1.5 text-sm tabular-nums" data-tip={tip}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full bg-page px-3 py-1.5 text-sm tabular-nums ${dim ? "text-muted opacity-60" : ""}`}
+      data-tip={tip}
+    >
       <Icon size={15} strokeWidth={2} />
       {value}
     </span>
   );
+}
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return <span className="rounded-full border border-line bg-white px-2.5 py-0.5 text-xs">{children}</span>;
+}
+
+function formatDate(iso?: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("he-IL", { month: "long", year: "numeric" });
 }
 
 export default function PreviewDialog({
@@ -67,19 +95,23 @@ export default function PreviewDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const meta = data ? [...data.classes.map((c) => `כיתה ${c}`), ...data.subjects].join(" · ") : "";
   const sequences = data?.rezefUsage?.sequences ?? null;
+  const tags = data?.tags ?? [];
+  const date = formatDate(data?.date);
+  const where = data ? data.platform || data.host : "";
+  // שורת פרטים: קטגוריה, משך, תאריך פרסום ופלטפורמה, רק מה שקיים.
+  const facts = data ? [data.category, data.duration, date, where && `פלטפורמה: ${where}`].filter(Boolean) : [];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-ink/40 p-4 sm:p-8" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl" role="dialog" aria-label="תצוגה מקדימה">
+      <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl" role="dialog" aria-label="תצוגה מקדימה">
         {data?.image && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={data.image} alt="" className="aspect-[1024/538] w-full object-cover bg-page" draggable={false} />
         )}
-        <div className="p-5 flex flex-col gap-3">
+        <div className="p-5 sm:p-6 flex flex-col gap-3.5">
           <div className="flex items-start gap-2">
-            <h2 className="text-xl font-extrabold leading-snug">{data?.title ?? fallbackTitle}</h2>
+            <h2 className="text-2xl font-extrabold leading-snug">{data?.title ?? fallbackTitle}</h2>
             <button type="button" className="btn-icon ms-auto shrink-0" aria-label="סגירה" data-tip="סגירה" onClick={onClose}>
               <X size={18} strokeWidth={2} />
             </button>
@@ -90,23 +122,51 @@ export default function PreviewDialog({
 
           {data && (
             <>
-              <p className="text-xs text-muted">
-                {[data.category, meta, data.author && `מאת ${data.author}`].filter(Boolean).join(" · ")}
-              </p>
-              {data.intro && <p className="text-[0.95rem] leading-relaxed">{data.intro}</p>}
+              {(data.credit || data.author) && (
+                <div className="flex flex-col gap-0.5">
+                  {data.credit ? (
+                    <>
+                      <p className="text-sm font-medium">יוצר/ת: {data.credit}</p>
+                      {data.author && <p className="text-xs text-muted">הועלה על ידי {data.author}</p>}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted">מאת {data.author}</p>
+                  )}
+                </div>
+              )}
+
+              {data.intro && <p className="text-base leading-relaxed whitespace-pre-line">{data.intro}</p>}
+
+              {facts.length > 0 && <p className="text-xs text-muted">{facts.join(" · ")}</p>}
+
+              {(data.classes.length > 0 || data.subjects.length > 0 || tags.length > 0) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {data.classes.map((c) => (
+                    <Pill key={`c-${c}`}>כיתה {c}</Pill>
+                  ))}
+                  {data.subjects.map((s) => (
+                    <Pill key={`s-${s}`}>{s}</Pill>
+                  ))}
+                  {tags.map((t) => (
+                    <span key={`t-${t}`} className="rounded-full bg-blue-soft px-2.5 py-0.5 text-xs text-blue-dark">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-1.5">
-                {data.usedCount > 0 && <Stat icon={Check} value={data.usedCount} tip="מורים שסימנו שהשתמשו בזה בכיתה" />}
-                {sequences !== null && <Stat icon={Users} value={sequences} tip="רצפי לימוד שכוללים את הפריט" />}
-                {data.rating !== null && <Stat icon={Star} value={`${data.rating} (${data.ratingCount})`} tip="דירוג ממוצע ומספר המדרגים" />}
-                {data.comments > 0 && <Stat icon={MessageCircle} value={data.comments} tip="תגובות" />}
-                {data.likes > 0 && <Stat icon={Heart} value={data.likes} tip="לבבות" />}
-                {data.views > 0 && <Stat icon={Eye} value={data.views} tip="צפיות" />}
-                {data.duration && <Stat icon={Clock} value={data.duration} tip="משך משוער לפי המחבר" />}
+                <Stat icon={Check} value={data.usedCount} dim={data.usedCount === 0} tip="השתמשו בזה: מורים שסימנו שהשתמשו בפריט בכיתה" />
+                {sequences !== null && <Stat icon={Layers} value={sequences} dim={sequences === 0} tip="רצפי לימוד שכוללים את הפריט" />}
+                {data.rating !== null ? (
+                  <Stat icon={Star} value={`${data.rating} (${data.ratingCount})`} tip="דירוג ממוצע ומספר המדרגים" />
+                ) : (
+                  <Stat icon={Star} value="אין דירוג" dim tip="עדיין לא דירגו את הפריט" />
+                )}
+                <Stat icon={MessageCircle} value={data.comments} dim={data.comments === 0} tip="תגובות" />
+                <Stat icon={Heart} value={data.likes} dim={data.likes === 0} tip="לבבות" />
+                <Stat icon={Eye} value={data.views} dim={data.views === 0} tip="צפיות" />
               </div>
-              {data.usedCount === 0 && sequences === null && data.rating === null && data.comments === 0 && data.likes === 0 && (
-                <p className="text-xs text-muted">עדיין אין נתוני שימוש לפריט הזה.</p>
-              )}
 
               {data.rezefUsage && data.rezefUsage.notes.length > 0 && (
                 <div className="rounded-2xl bg-blue-soft/60 p-3 flex flex-col gap-1.5">
@@ -125,11 +185,6 @@ export default function PreviewDialog({
                   <ExternalLink size={16} strokeWidth={2} />
                   פתיחה באתר
                 </a>
-                {(data.platform || data.host) && (
-                  <span className="text-xs text-muted truncate" data-tip="הפריט עצמו מתארח בפלטפורמה חיצונית">
-                    פלטפורמה: {data.platform || data.host}
-                  </span>
-                )}
               </div>
             </>
           )}

@@ -78,6 +78,11 @@ export const lessons = pgTable("lessons", {
   publishedCollectionId: integer("published_collection_id"),
   publishedCollectionUrl: text("published_collection_url"),
   publishedAt: timestamp("published_at"),
+  // "מה נלמד היום" (שקופית הפתיחה) ו"אז מה למדנו" (הסיכום). טקסט חופשי, שורה לכל נקודה.
+  goals: text("goals").notNull().default(""),
+  recap: text("recap").notNull().default(""),
+  // מתי השיעור נפתח לתלמידים. ריק = עדיין מוסתר מהם.
+  openedAt: timestamp("opened_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -163,4 +168,57 @@ export const allowedDomains = pgTable("allowed_domains", {
   domain: text("domain").primaryKey(),
   region: text("region"),
   note: text("note"),
+});
+
+// תלמיד: מזוהה רק לפי חשבון Google הארגוני. לא נשמרים שם או כתובת מייל, רק מזהה החשבון והדומיין.
+export const students = pgTable("students", {
+  id: serial("id").primaryKey(),
+  googleSub: text("google_sub").notNull().unique(),
+  domain: text("domain").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// שיוך תלמיד לקבוצת לימוד, עם כינוי שהתלמיד בחר (והמורה יכולה לערוך). כינוי נפרד לכל קבוצה.
+export const memberships = pgTable(
+  "memberships",
+  {
+    id: serial("id").primaryKey(),
+    studentId: integer("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    nickname: text("nickname").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("memberships_student_group_idx").on(t.studentId, t.groupId)],
+);
+
+// סימון "הגשתי" של תלמיד על פריט שהוגדר כמטלת הגשה.
+export const submissions = pgTable(
+  "submissions",
+  {
+    id: serial("id").primaryKey(),
+    membershipId: integer("membership_id")
+      .notNull()
+      .references(() => memberships.id, { onDelete: "cascade" }),
+    lessonItemId: integer("lesson_item_id")
+      .notNull()
+      .references(() => lessonItems.id, { onDelete: "cascade" }),
+    doneAt: timestamp("done_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("submissions_member_item_idx").on(t.membershipId, t.lessonItemId)],
+);
+
+// "תצוגת לוח": תמונה של מה שהמורה ציירה על המסך במצב שיעור, שנשמרת לתלמידים.
+export const lessonBoards = pgTable("lesson_boards", {
+  id: serial("id").primaryKey(),
+  lessonId: integer("lesson_id")
+    .notNull()
+    .references(() => lessons.id, { onDelete: "cascade" }),
+  // תמונה מוקטנת כ-data URL (webp), כדי לא לנהל אחסון קבצים נפרד בשלב הזה.
+  image: text("image").notNull(),
+  caption: text("caption").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });

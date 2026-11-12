@@ -43,6 +43,9 @@ import {
   Lightbulb,
   Library,
   Link2,
+  Eye,
+  EyeOff,
+  GraduationCap,
   MonitorPlay,
   Pin,
   Plus,
@@ -81,7 +84,7 @@ type LessonItem = {
   shareNote: boolean;
   item: Item;
 };
-type Lesson = { id: number; title: string; topicId: number | null; publishedCollectionUrl: string | null; items: LessonItem[] };
+type Lesson = { id: number; title: string; topicId: number | null; publishedCollectionUrl: string | null; openedAt: string | null; goals?: string; recap?: string; items: LessonItem[] };
 type CrossItem = { id: number; note: string; topicId: number | null; duration: string | null; item: Item };
 type BoardData = {
   group: { id: number; name: string; className: string | null; subjectName: string | null; tags: string[]; joinCode: string };
@@ -510,6 +513,7 @@ function LessonColumn({
   onItemType,
   onPublishLesson,
   onPresent,
+  onToggleOpen,
 }: {
   lesson: Lesson;
   index: number;
@@ -529,6 +533,7 @@ function LessonColumn({
   onItemType: (itemId: number, type: string) => void;
   onPublishLesson: () => void;
   onPresent: () => void;
+  onToggleOpen: () => void;
 }) {
   // אותו אלמנט הוא גם יעד לשחרור פריטים (lesson-) וגם שיעור שאפשר לסדר בגרירה (ls-).
   const { setNodeRef: setDropRef } = useDroppable({ id: `lesson-${lesson.id}` });
@@ -596,6 +601,16 @@ function LessonColumn({
             כ־{total} דק׳
           </span>
         )}
+        <button
+          type="button"
+          className={`btn-icon shrink-0 !p-1.5 ${lesson.openedAt ? "!text-green-600" : ""}`}
+          data-tip={lesson.openedAt ? "פתוח לתלמידים. לחצו כדי להסתיר" : "מוסתר מהתלמידים. לחצו כדי לפתוח להם את השיעור"}
+          aria-label="פתיחת השיעור לתלמידים"
+          aria-pressed={Boolean(lesson.openedAt)}
+          onClick={onToggleOpen}
+        >
+          {lesson.openedAt ? <Eye size={16} strokeWidth={2} /> : <EyeOff size={16} strokeWidth={2} />}
+        </button>
         {lesson.items.length > 0 && (
           <button
             type="button"
@@ -715,6 +730,33 @@ function Butterfly({ card, rank, onPreview }: { card: WhCard; rank: number; onPr
         </button>
         </span>
       )}
+    </div>
+  );
+}
+
+// שלד טעון: אותו מימד כמו פריט אמיתי (תמונה 16/10, שתי שורות, סמל עגול בפינה), בלי ריחוף.
+function SkeletonCard({ rank }: { rank: number }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="sk-card relative w-[10.5rem] shrink-0"
+      style={
+        {
+          "--fly-y": `${FLY_SHIFT[rank % FLY_SHIFT.length]}px`,
+          "--fly-r": `${FLY_TILT[rank % FLY_TILT.length]}deg`,
+        } as React.CSSProperties
+      }
+    >
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+        <div className="sk-block aspect-[16/10]" />
+        <div className="flex flex-col gap-1.5 p-2 pt-2.5">
+          <div className="sk-block h-3 w-11/12 rounded-full" />
+          <div className="sk-block h-3 w-7/12 rounded-full" />
+        </div>
+      </div>
+      <span className="absolute -top-2.5 -start-2.5">
+        <span className="sk-block block h-9 w-9 rounded-full ring-2 ring-white" />
+      </span>
     </div>
   );
 }
@@ -999,7 +1041,18 @@ function Warehouse({
                 ),
             )}
             {osError && <p className="px-3 text-coral text-sm">{osError}</p>}
-            {(osLoading || !settled) && !osError && <p className="text-muted text-sm text-center py-4">טוענים…</p>}
+            {(osLoading || !settled) && !osError && (
+              <>
+                <span role="status" className="sr-only">
+                  טוענים…
+                </span>
+                <div className="flex flex-wrap gap-x-5 gap-y-7 px-3 pt-4 pb-2" aria-hidden="true">
+                  {Array.from({ length: shownCount === 0 ? 12 : 6 }, (_, i) => (
+                    <SkeletonCard key={i} rank={i} />
+                  ))}
+                </div>
+              </>
+            )}
             {settled && !osError && !hasMore && shownCount === 0 && (
               <div className="py-8 flex flex-col items-center gap-2 text-center">
                 <p className="text-muted text-sm">לא נמצאו פריטים חדשים</p>
@@ -1548,6 +1601,16 @@ export default function Board({ groupId }: { groupId: number }) {
     await load();
   }
 
+  // פתיחה או הסתרה של שיעור אצל התלמידים.
+  async function toggleLessonOpen(l: Lesson) {
+    try {
+      await api(`/api/lessons/${l.id}/open`, "POST", { open: !l.openedAt });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "השמירה נכשלה");
+    }
+    await load();
+  }
+
   function hoverLesson(id: number) {
     if (enterTimer.current) clearTimeout(enterTimer.current);
     // השהיה קצרה: מעבר עכבר חולף בין שיעורים לא יגרום לקפיצות פריסה.
@@ -1596,6 +1659,9 @@ export default function Board({ groupId }: { groupId: number }) {
           <Settings2 size={16} strokeWidth={2} />
         </button>
         <div className="ms-auto flex gap-2">
+          <a className="btn btn-ghost" href={`/s/g/${group.id}`} data-tip="כך התלמידים רואים את הקבוצה: רק שיעורים שפתחת להם">
+            <GraduationCap size={16} strokeWidth={2} /> תצוגת תלמיד
+          </a>
           <button
             className="btn btn-ghost"
             data-tip="הקוד שהתלמידים יזינו כדי להצטרף"
@@ -1732,6 +1798,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onItemType={itemType}
                       onPublishLesson={() => setPublishLessonFor(l)}
                       onPresent={() => setPresenting(l.id)}
+                      onToggleOpen={() => toggleLessonOpen(l)}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>

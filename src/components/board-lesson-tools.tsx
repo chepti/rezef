@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dices,
   Eraser,
+  GraduationCap,
   ImageDown,
+  Moon,
   Pause,
   Pencil,
+  Pin,
+  PinOff,
   Play,
   RotateCcw,
   Shuffle,
@@ -112,12 +116,18 @@ function Floating({
   title,
   start,
   onClose,
+  pinned,
+  onTogglePin,
+  onMoved,
   children,
   wide,
 }: {
   title: string;
   start: { x: number; y: number };
   onClose: () => void;
+  pinned: boolean;
+  onTogglePin: (pos: { x: number; y: number }) => void;
+  onMoved: (pos: { x: number; y: number }) => void;
   children: React.ReactNode;
   wide?: boolean;
 }) {
@@ -138,12 +148,30 @@ function Floating({
         onPointerMove={(e) => {
           if (drag.current) setPos({ x: Math.max(0, e.clientX - drag.current.dx), y: Math.max(0, e.clientY - drag.current.dy) });
         }}
-        onPointerUp={() => (drag.current = null)}
+        onPointerUp={() => {
+          // נעוץ: המיקום החדש נשמר רק בסוף הגרירה.
+          if (drag.current) {
+            drag.current = null;
+            if (pinned) onMoved(pos);
+          }
+        }}
       >
         <h3 className="text-sm font-bold">{title}</h3>
         <button
           type="button"
-          className="btn-icon !p-1 ms-auto"
+          className={`btn-icon !p-1 ms-auto ${pinned ? "!bg-blue-soft !text-blue-dark" : ""}`}
+          data-tip={pinned ? "נעוץ. לחצו לביטול" : "נעיצה: ייפתח בכל שיעור"}
+          data-tip-pos="below"
+          aria-label={pinned ? `ביטול נעיצת ${title}` : `נעיצת ${title}`}
+          aria-pressed={pinned}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onTogglePin(pos)}
+        >
+          {pinned ? <PinOff size={16} strokeWidth={2} /> : <Pin size={16} strokeWidth={2} />}
+        </button>
+        <button
+          type="button"
+          className="btn-icon !p-1"
           aria-label={`סגירת ${title}`}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onClose}
@@ -451,7 +479,81 @@ const TOOLS = [
 ] as const;
 type ToolKey = (typeof TOOLS)[number]["key"];
 
-export function ToolButtons({ open, onToggle, drawing, onDraw }: { open: Set<string>; onToggle: (key: string) => void; drawing: boolean; onDraw: () => void }) {
+type Pos = { x: number; y: number };
+
+function readPins(groupId: number): Record<string, Pos> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(`rezef-pins-${groupId}`) ?? "[]");
+    const out: Record<string, Pos> = {};
+    if (Array.isArray(raw))
+      for (const p of raw) {
+        if (p && TOOLS.some((t) => t.key === p.key) && Number.isFinite(p.x) && Number.isFinite(p.y)) out[p.key] = { x: Math.max(0, p.x), y: Math.max(0, p.y) };
+      }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writePins(groupId: number, pins: Record<string, Pos>) {
+  try {
+    localStorage.setItem(`rezef-pins-${groupId}`, JSON.stringify(Object.entries(pins).map(([key, p]) => ({ key, x: p.x, y: p.y }))));
+  } catch {
+    // בלי אחסון מקומי הנעיצה תחזיק רק עד סגירת מצב השיעור.
+  }
+}
+
+// מצב החלוניות: אילו פתוחות ואילו נעוצות (נעוצות נפתחות מעצמן, במקום ששמרנו, בכל שיעור בקבוצה).
+export function useToolWindows(groupId: number) {
+  const [pins, setPins] = useState<Record<string, Pos>>(() => readPins(groupId));
+  const [open, setOpen] = useState<Set<string>>(() => new Set(Object.keys(readPins(groupId))));
+
+  const toggle = useCallback((key: string) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // סגירה בלבד: הנעיצה נשארת והחלונית תחזור בפעם הבאה.
+  const close = useCallback((key: string) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  const setPin = useCallback(
+    (key: string, pos: Pos | null) => {
+      const next = { ...pins };
+      if (pos) next[key] = pos;
+      else delete next[key];
+      setPins(next);
+      writePins(groupId, next);
+    },
+    [pins, groupId],
+  );
+
+  return { open, pins, toggle, close, setPin };
+}
+export type ToolWindowsState = ReturnType<typeof useToolWindows>;
+
+export function ToolButtons({
+  open,
+  onToggle,
+  drawing,
+  onDraw,
+  onBlackout,
+}: {
+  open: Set<string>;
+  onToggle: (key: string) => void;
+  drawing: boolean;
+  onDraw: () => void;
+  onBlackout: () => void;
+}) {
   return (
     <div className="flex items-center gap-1 rounded-full border border-line bg-white px-1.5 py-1" role="toolbar" aria-label="כלי כיתה">
       {TOOLS.map((t) => (
@@ -478,11 +580,15 @@ export function ToolButtons({ open, onToggle, drawing, onDraw }: { open: Set<str
       >
         <Pencil size={18} strokeWidth={2} />
       </button>
+      <button className="btn-icon !p-2" data-tip="חושך: כיבוי זמני של המסך" data-tip-pos="below" aria-label="חושך" onClick={onBlackout}>
+        <Moon size={18} strokeWidth={2} />
+      </button>
     </div>
   );
 }
 
-export function ToolWindows({ open, onClose, groupId }: { open: Set<string>; onClose: (key: string) => void; groupId: number }) {
+export function ToolWindows({ state, groupId }: { state: ToolWindowsState; groupId: number }) {
+  const { open, pins, close, setPin } = state;
   const body: Record<ToolKey, React.ReactNode> = {
     timer: <CountdownTool />,
     dice: <DiceTool />,
@@ -493,7 +599,16 @@ export function ToolWindows({ open, onClose, groupId }: { open: Set<string>; onC
   return (
     <>
       {TOOLS.filter((t) => open.has(t.key)).map((t, i) => (
-        <Floating key={t.key} title={t.label} wide={t.wide} start={{ x: 24 + i * 36, y: 72 + i * 28 }} onClose={() => onClose(t.key)}>
+        <Floating
+          key={t.key}
+          title={t.label}
+          wide={t.wide}
+          start={pins[t.key] ?? { x: 24 + i * 36, y: 72 + i * 28 }}
+          onClose={() => close(t.key)}
+          pinned={t.key in pins}
+          onTogglePin={(pos) => setPin(t.key, t.key in pins ? null : pos)}
+          onMoved={(pos) => setPin(t.key, pos)}
+        >
           {body[t.key]}
         </Floating>
       ))}
@@ -506,7 +621,7 @@ export function ToolWindows({ open, onClose, groupId }: { open: Set<string>; onC
 const PEN_COLORS = ["#1b1d22", "#e5484d", "#4f6cd6", "#0e9f8a", "#f2a413"];
 
 // הציור נשמר לכל שלב בשיעור בנפרד (לפי pageKey), כל עוד מצב השיעור פתוח.
-export function DrawLayer({ active, pageKey, fileName }: { active: boolean; pageKey: string; fileName: string }) {
+export function DrawLayer({ active, pageKey, fileName, lessonId }: { active: boolean; pageKey: string; fileName: string; lessonId: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pages = useRef(new Map<string, string>());
   const undo = useRef<ImageData[]>([]);
@@ -514,6 +629,7 @@ export function DrawLayer({ active, pageKey, fileName }: { active: boolean; page
   const [color, setColor] = useState(PEN_COLORS[1]);
   const [erase, setErase] = useState(false);
   const [hasInk, setHasInk] = useState(false);
+  const [shared, setShared] = useState<"idle" | "busy" | "done" | "error">("idle");
 
   // התאמת גודל הקנבס לבמה, בלי לאבד את מה שצויר.
   useEffect(() => {
@@ -605,21 +721,46 @@ export function DrawLayer({ active, pageKey, fileName }: { active: boolean; page
     setHasInk(false);
   }
   // שמירת הלוח כתמונה (על רקע לבן), להעלאה או לשליחה לתלמידים.
-  function download() {
+  // הלוח על רקע לבן, מוקטן לרוחב נתון (הקנבס עצמו שקוף ובצפיפות המסך).
+  function flatten(maxWidth: number): HTMLCanvasElement | null {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
+    const scale = Math.min(1, maxWidth / canvas.width);
     const out = document.createElement("canvas");
-    out.width = canvas.width;
-    out.height = canvas.height;
+    out.width = Math.round(canvas.width * scale);
+    out.height = Math.round(canvas.height * scale);
     const ctx = out.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return null;
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, out.width, out.height);
-    ctx.drawImage(canvas, 0, 0);
+    ctx.drawImage(canvas, 0, 0, out.width, out.height);
+    return out;
+  }
+  function download() {
+    const out = flatten(4000);
+    if (!out) return;
     const a = document.createElement("a");
     a.href = out.toDataURL("image/png");
     a.download = `${fileName}.png`;
     a.click();
+  }
+  // "תצוגת לוח": התמונה נשמרת בשיעור, והתלמידים רואים אותה בדף הקבוצה (כשהשיעור פתוח להם).
+  async function share() {
+    const out = flatten(1400);
+    if (!out) return;
+    setShared("busy");
+    try {
+      const res = await fetch(`/api/lessons/${lessonId}/boards`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image: out.toDataURL("image/webp", 0.8) }),
+      });
+      if (!res.ok) throw new Error();
+      setShared("done");
+    } catch {
+      setShared("error");
+    }
+    setTimeout(() => setShared("idle"), 2500);
   }
 
   return (
@@ -662,8 +803,17 @@ export function DrawLayer({ active, pageKey, fileName }: { active: boolean; page
           <button className="btn-icon !p-1.5" data-tip="ניקוי הלוח" aria-label="ניקוי הלוח" onClick={clear}>
             <Trash2 size={18} strokeWidth={2} />
           </button>
-          <button className="btn-icon !p-1.5" data-tip="שמירת הלוח כתמונה" aria-label="שמירת הלוח כתמונה" onClick={download} disabled={!hasInk}>
+          <button className="btn-icon !p-1.5" data-tip="הורדת הלוח כתמונה" aria-label="הורדת הלוח כתמונה" onClick={download} disabled={!hasInk}>
             <ImageDown size={18} strokeWidth={2} />
+          </button>
+          <button
+            className={`btn-icon !p-1.5 ${shared === "done" ? "!text-green-600" : shared === "error" ? "!text-coral" : ""}`}
+            data-tip={shared === "done" ? "הלוח נשמר לתלמידים" : shared === "error" ? "השמירה נכשלה" : "שמירת הלוח לתלמידים"}
+            aria-label="שמירת הלוח לתלמידים"
+            onClick={share}
+            disabled={!hasInk || shared === "busy"}
+          >
+            <GraduationCap size={18} strokeWidth={2} />
           </button>
         </div>
       )}

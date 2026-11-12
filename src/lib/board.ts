@@ -345,10 +345,14 @@ export async function addLesson(groupId: number, teacherId: number, input: { tit
 export async function updateLesson(
   lessonId: number,
   teacherId: number,
-  patch: { title?: string; topicId?: number; index?: number },
+  patch: { title?: string; topicId?: number; index?: number; goals?: string; recap?: string },
 ) {
   const db = await getDb();
   const { lesson } = await ownedLesson(lessonId, teacherId);
+
+  // "מה נלמד היום" ו"אז מה למדנו": טקסט חופשי, נקודה בכל שורה. מותר לרוקן.
+  if (patch.goals !== undefined) await db.update(lessons).set({ goals: patch.goals.trim() }).where(eq(lessons.id, lessonId));
+  if (patch.recap !== undefined) await db.update(lessons).set({ recap: patch.recap.trim() }).where(eq(lessons.id, lessonId));
 
   if (patch.title !== undefined) {
     const clean = patch.title.trim();

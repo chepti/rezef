@@ -6,6 +6,8 @@ const schema = z.object({
   title: z.string().min(1).max(80).optional(),
   topicId: z.number().int().positive().optional(),
   index: z.number().int().min(0).optional(),
+  goals: z.string().max(1500).optional(),
+  recap: z.string().max(1500).optional(),
 });
 
 export async function PATCH(req: Request, ctx: RouteContext<"/api/lessons/[id]">) {

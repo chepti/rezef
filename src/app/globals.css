@@ -177,3 +177,27 @@ body {
   bottom: auto;
   top: calc(100% + 8px);
 }
+
+/* שלדי טעינה של פריטי המאגר: אותו היסט וסיבוב כמו בפריט האמיתי, בלי ריחוף, עם ברק עדין. */
+.sk-card {
+  transform: translateY(var(--fly-y, 0)) rotate(var(--fly-r, 0));
+  opacity: 0.85;
+}
+.sk-block {
+  background: linear-gradient(90deg, var(--blue-soft, #e8f0fe) 0%, #f6f9ff 50%, var(--blue-soft, #e8f0fe) 100%);
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes sk-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-block {
+    animation: none;
+  }
+}

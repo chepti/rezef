@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import TagInput from "./tag-input";
 import type { Terms } from "./board-publish";
 import type { Topic } from "./board-topics";
+import GroupMembers from "./board-members";
 
 export type SettingsGroup = {
   id: number;
@@ -255,6 +256,8 @@ export default function GroupSettings({
           ))}
         </ul>
       </section>
+
+      <GroupMembers groupId={group.id} />
     </div>
   );
 }
