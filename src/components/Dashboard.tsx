@@ -48,11 +48,6 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.reload();
-  }
-
   async function load() {
     const res = await fetch("/api/groups");
     if (res.status === 401) {
@@ -127,9 +122,6 @@ export default function Dashboard() {
           )}
           <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
             <Plus size={18} strokeWidth={2} /> קבוצה חדשה
-          </button>
-          <button className="btn btn-ghost" onClick={logout}>
-            יציאה
           </button>
         </div>
       </div>
