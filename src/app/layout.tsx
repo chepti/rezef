@@ -30,16 +30,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <div className="ms-auto flex items-center gap-3">
               <HeaderAuth />
             </div>
-            <a
-              href={`mailto:chepti@gmail.com?subject=${encodeURIComponent("משוב: הרצף של חומר פתוח")}`}
-              className="btn btn-ghost !py-1.5"
-              data-tip="נשמח לשמוע: מה עובד ומה מפריע"
-            >
-              <MessageSquare size={16} strokeWidth={2} /> משוב
-            </a>
           </div>
         </header>
         <main className="flex-1">{children}</main>
+        {/* פס משוב מוצמד לתחתית המסך, דק, כדי לא לתפוס מקום מהתוכן */}
+        <footer className="sticky bottom-0 z-40 border-t border-line bg-white/90 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl items-center justify-center px-5 py-1">
+            <a
+              href={`mailto:chepti@gmail.com?subject=${encodeURIComponent("משוב: הרצף של חומר פתוח")}`}
+              className="btn btn-ghost !py-1 text-sm"
+              data-tip="נשמח לשמוע: מה עובד ומה מפריע"
+            >
+              <MessageSquare size={15} strokeWidth={2} /> משוב
+            </a>
+          </div>
+        </footer>
       </body>
     </html>
   );

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Check, ExternalLink, Eye, Frown, LifeBuoy, Meh, MessageSquareText, Pin, Smile, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Check, ExternalLink, Eye, Frown, LifeBuoy, Meh, MessageSquareText, Pin, Smile, X } from "lucide-react";
 import { TYPE_META, typeOf } from "./content-types";
 
 type Submission = { answer: string; link: string | null; rating: number | null; needsHelp: boolean; feedback: string; updatedAt: string };
@@ -345,6 +345,25 @@ export default function StudentGroup({ groupId }: { groupId: number }) {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [openItem, setOpenItem] = useState<number | null>(null);
+  // ניווט אופקי בסרגל השיעורים: חצים שמופיעים רק לכיוון שיש בו עוד שיעורים.
+  const strip = useRef<HTMLDivElement | null>(null);
+  const [more, setMore] = useState({ before: false, after: false });
+
+  const measure = useCallback(() => {
+    const el = strip.current;
+    if (!el) return;
+    // בכיוון ימין-לשמאל scrollLeft שלילי: 0 הוא תחילת הסרגל (ימין).
+    const pos = Math.abs(el.scrollLeft);
+    const max = el.scrollWidth - el.clientWidth;
+    setMore({ before: pos > 2, after: pos < max - 2 });
+  }, []);
+
+  function scrollStrip(dir: 1 | -1) {
+    const el = strip.current;
+    if (!el) return;
+    // dir 1 = הלאה (שמאלה), dir -1 = אחורה (ימינה).
+    el.scrollBy({ left: -dir * Math.max(180, el.clientWidth * 0.75), behavior: "smooth" });
+  }
 
   useEffect(() => {
     let stale = false;
@@ -364,6 +383,20 @@ export default function StudentGroup({ groupId }: { groupId: number }) {
       stale = true;
     };
   }, [groupId]);
+
+  const lessonCount = view?.lessons.length ?? 0;
+  useEffect(() => {
+    // הסרגל נמדד אחרי שהשיעורים נטענו ובכל שינוי גודל.
+    const el = strip.current;
+    if (!el) return;
+    const frame = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [lessonCount, measure]);
 
   // בסרגל השיעורים הסדר הוא סדר הלימוד (הישן מימין), והשיעור האחרון שנפתח נבחר כברירת מחדל.
   const ordered = useMemo(() => (view ? [...view.lessons].reverse() : []), [view]);
@@ -430,7 +463,35 @@ export default function StudentGroup({ groupId }: { groupId: number }) {
 
         {/* סרגל השיעורים: עיגול לכל שיעור שנפתח, בצבע הנושא שלו */}
         {ordered.length > 0 && (
-          <div className="mx-auto max-w-6xl overflow-x-auto px-5 pb-5 no-scrollbar">
+          <div className="relative mx-auto max-w-6xl px-5 pb-5">
+            {more.before && (
+              <span className="absolute top-1/2 z-10 -translate-y-[60%]" style={{ right: "0.25rem" }}>
+                <button
+                  type="button"
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-ink shadow-lg transition hover:scale-105"
+                  aria-label="שיעורים קודמים"
+                  data-tip="שיעורים קודמים"
+                  onClick={() => scrollStrip(-1)}
+                >
+                  <ArrowRight size={20} strokeWidth={2} />
+                </button>
+              </span>
+            )}
+            {more.after && (
+              <span className="absolute top-1/2 z-10 -translate-y-[60%]" style={{ left: "0.25rem" }}>
+                <button
+                  type="button"
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-ink shadow-lg transition hover:scale-105"
+                  aria-label="שיעורים הבאים"
+                  data-tip="שיעורים הבאים"
+                  data-tip-edge="left"
+                  onClick={() => scrollStrip(1)}
+                >
+                  <ArrowLeft size={20} strokeWidth={2} />
+                </button>
+              </span>
+            )}
+            <div ref={strip} onScroll={measure} className="overflow-x-auto no-scrollbar">
             <ol className="flex w-max items-stretch gap-2">
               {ordered.map((l) => {
                 const topic = topicOf(l.topicId);
@@ -441,7 +502,11 @@ export default function StudentGroup({ groupId }: { groupId: number }) {
                   <li key={l.id}>
                     <button
                       type="button"
-                      onClick={() => setSelected(l.id)}
+                      onClick={(e) => {
+                        setSelected(l.id);
+                        // השיעור שנבחר מוצג במלואו גם אם היה חתוך בקצה הסרגל.
+                        e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+                      }}
                       aria-current={active}
                       className={`flex h-full w-36 flex-col gap-1 rounded-2xl px-3 py-2.5 text-start transition ${
                         active ? "bg-white text-ink shadow-lg" : "bg-white/15 hover:bg-white/25"
@@ -467,6 +532,7 @@ export default function StudentGroup({ groupId }: { groupId: number }) {
                 );
               })}
             </ol>
+            </div>
           </div>
         )}
       </header>
