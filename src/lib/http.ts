@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { errorResponse, HttpError, requireTeacher, type Teacher } from "./session";
+import { errorResponse, HttpError, requireAdmin, requireTeacher, type Teacher } from "./session";
 
 export async function withTeacher(fn: (teacher: Teacher) => Promise<unknown>): Promise<Response> {
   try {
@@ -8,6 +8,19 @@ export async function withTeacher(fn: (teacher: Teacher) => Promise<unknown>): P
     return Response.json(result ?? { ok: true });
   } catch (e) {
     // בזמן build הבקשה נקטעת בכוונה על ידי Next (הבטחה תלויה): לא שגיאה אמיתית, ולא מדפיסים אותה.
+    if (e && typeof e === "object" && (e as { digest?: string }).digest === "HANGING_PROMISE_REJECTION") {
+      throw e;
+    }
+    return errorResponse(e);
+  }
+}
+
+export async function withAdmin(fn: (admin: Teacher) => Promise<unknown>): Promise<Response> {
+  try {
+    const admin = await requireAdmin();
+    const result = await fn(admin);
+    return Response.json(result ?? { ok: true });
+  } catch (e) {
     if (e && typeof e === "object" && (e as { digest?: string }).digest === "HANGING_PROMISE_REJECTION") {
       throw e;
     }

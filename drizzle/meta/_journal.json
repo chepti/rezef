@@ -64,6 +64,13 @@
       "when": 1794491937789,
       "tag": "0008_high_victor_mancha",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794557928852,
+      "tag": "0009_ancient_sinister_six",
+      "breakpoints": true
     }
   ]
 }

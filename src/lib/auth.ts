@@ -46,7 +46,7 @@ export async function readSessionToken(token: string): Promise<number | null> {
   }
 }
 
-export type BridgeClaims = { wpUserId: number; name: string; state: string };
+export type BridgeClaims = { wpUserId: number; name: string; state: string; email: string; admin: boolean };
 
 export async function verifyBridgeToken(token: string): Promise<BridgeClaims | null> {
   try {
@@ -57,7 +57,13 @@ export async function verifyBridgeToken(token: string): Promise<BridgeClaims | n
     });
     const wpUserId = Number(payload.sub);
     if (!Number.isInteger(wpUserId) || wpUserId < 1 || typeof payload.state !== "string") return null;
-    return { wpUserId, name: String(payload.name ?? "מורה"), state: payload.state };
+    return {
+      wpUserId,
+      name: String(payload.name ?? "מורה"),
+      state: payload.state,
+      email: typeof payload.email === "string" ? payload.email.toLowerCase() : "",
+      admin: payload.admin === true,
+    };
   } catch {
     return null;
   }
@@ -71,4 +77,13 @@ export function isPilotAllowed(wpUserId: number): boolean {
     .split(",")
     .map((s) => Number(s.trim()))
     .includes(wpUserId);
+}
+
+// מנהלת: גם הרשאת מנהלת באתר חומר פתוח וגם מייל מהרשימה. ברירת המחדל chepti@gmail.com, ואפשר לשנות ב-ADMIN_EMAILS (מופרד בפסיקים).
+export function isAdminClaims(claims: BridgeClaims): boolean {
+  const allowed = (process.env.ADMIN_EMAILS ?? "chepti@gmail.com")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return claims.admin && claims.email !== "" && allowed.includes(claims.email);
 }

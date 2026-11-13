@@ -24,6 +24,7 @@ export async function requireTeacher(): Promise<Teacher> {
     const teacherId = await readSessionToken(token);
     if (teacherId) {
       const [teacher] = await db.select().from(tables.teachers).where(eq(tables.teachers.id, teacherId)).limit(1);
+      if (teacher?.blocked) throw new HttpError(403, "הגישה לחשבון הזה הושעתה. אפשר לפנות למנהלת המערכת");
       if (teacher) return teacher;
     }
   }
@@ -40,6 +41,13 @@ export async function requireTeacher(): Promise<Teacher> {
   }
 
   throw new HttpError(401, "נדרשת התחברות");
+}
+
+// אזור הניהול: רק מורה שסומנה כמנהלת בכניסה האחרונה.
+export async function requireAdmin(): Promise<Teacher> {
+  const teacher = await requireTeacher();
+  if (!teacher.isAdmin && process.env.DEV_LOGIN !== "1") throw new HttpError(403, "אין הרשאת ניהול");
+  return teacher;
 }
 
 export function errorResponse(e: unknown): Response {

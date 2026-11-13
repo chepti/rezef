@@ -14,6 +14,7 @@ const ERRORS: Record<string, string> = {
   domain: "אפשר להיכנס רק עם חשבון Google של בית הספר. חשבון פרטי לא מתאים.",
   "not-ready": "הכניסה לתלמידים עדיין לא הופעלה. נסו שוב בקרוב.",
   login: "הכניסה לא הושלמה. נסו שוב.",
+  off: "הכניסה לתלמידים סגורה כרגע.",
 };
 
 export default function StudentHome({ error }: { error: string }) {
@@ -23,6 +24,7 @@ export default function StudentHome({ error }: { error: string }) {
   const [nickname, setNickname] = useState("");
   const [busy, setBusy] = useState(false);
   const [joinError, setJoinError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(() => {
     fetch("/api/student/me")
@@ -33,6 +35,11 @@ export default function StudentHome({ error }: { error: string }) {
 
   useEffect(() => {
     load();
+    // הודעה מהמנהלת (למשל תחזוקה), אם יש.
+    fetch("/api/public-settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { studentNotice?: string } | null) => d?.studentNotice && setNotice(d.studentNotice))
+      .catch(() => {});
   }, [load]);
 
   async function join(e: React.FormEvent) {
@@ -66,6 +73,11 @@ export default function StudentHome({ error }: { error: string }) {
     return (
       <main className="mx-auto flex max-w-md flex-col gap-4 px-5 py-14 text-center">
         <h1 className="text-3xl font-extrabold">כניסת תלמידים</h1>
+        {notice && (
+          <p className="rounded-2xl bg-blue-soft px-4 py-3 text-sm text-blue-dark" role="status">
+            {notice}
+          </p>
+        )}
         <p className="text-muted">נכנסים עם חשבון Google של בית הספר, ומצטרפים לקבוצה עם הקוד שקיבלתם מהמורה.</p>
         {error && ERRORS[error] && (
           <p className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral" role="alert">
@@ -87,6 +99,11 @@ export default function StudentHome({ error }: { error: string }) {
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-5 py-10">
+      {notice && (
+        <p className="rounded-2xl bg-blue-soft px-4 py-3 text-sm text-blue-dark" role="status">
+          {notice}
+        </p>
+      )}
       <div className="flex items-center gap-3">
         <h1 className="text-3xl font-extrabold">הקבוצות שלי</h1>
         <button className="btn btn-ghost ms-auto" onClick={logout}>

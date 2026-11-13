@@ -4,6 +4,7 @@ import { jwtVerify, SignJWT, createRemoteJWKSet } from "jose";
 import { getDb, tables } from "@/db";
 import { HttpError, errorResponse, requireTeacher } from "./session";
 import { resolveEmbed } from "./embed";
+import { studentsEnabled } from "./admin";
 
 const { students, memberships, submissions, groups, sequences, lessons, lessonItems, items, topics, lessonBoards, allowedDomains, teachers } = tables;
 
@@ -163,6 +164,7 @@ export async function listStudentGroups(studentId: number) {
 
 export async function joinGroup(studentId: number, code: string, nickname: string) {
   const db = await getDb();
+  if (!(await studentsEnabled())) throw new HttpError(403, "ההצטרפות לקבוצות סגורה כרגע");
   const joinCode = code.replace(/\s+/g, "").toUpperCase();
   const [group] = await db.select().from(groups).where(eq(groups.joinCode, joinCode)).limit(1);
   // אותה הודעה לקוד שגוי ולקבוצה בארכיון, כדי לא לחשוף אילו קודים קיימים.

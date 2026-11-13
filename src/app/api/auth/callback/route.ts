@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { getDb, tables } from "@/db";
+import { getSettings } from "@/lib/admin";
 import {
   appUrl,
   cookieBase,
   createSessionToken,
+  isAdminClaims,
   isPilotAllowed,
   SESSION_COOKIE,
   STATE_COOKIE,
@@ -30,16 +32,18 @@ export async function GET(req: NextRequest) {
   const db = await getDb();
   const { teachers } = tables;
   const [existing] = await db.select().from(teachers).where(eq(teachers.wpUserId, claims.wpUserId)).limit(1);
+  const isAdmin = isAdminClaims(claims);
+  if (existing?.blocked) return fail(req, "blocked");
+  // רשימה סגורה: מורה שלא נכנסה בעבר לא תיכנס עד שהמנהלת תפתח את ההרשמה (מנהלת נכנסת תמיד).
+  if (!existing && !isAdmin && (await getSettings()).teachers_open !== "1") return fail(req, "closed");
   let teacherId: number;
   if (existing) {
     teacherId = existing.id;
-    if (existing.displayName !== claims.name) {
-      await db.update(teachers).set({ displayName: claims.name }).where(eq(teachers.id, existing.id));
-    }
+    await db.update(teachers).set({ displayName: claims.name, isAdmin, lastLoginAt: new Date() }).where(eq(teachers.id, existing.id));
   } else {
     const [created] = await db
       .insert(teachers)
-      .values({ displayName: claims.name, wpUserId: claims.wpUserId })
+      .values({ displayName: claims.name, wpUserId: claims.wpUserId, isAdmin, lastLoginAt: new Date() })
       .returning();
     teacherId = created.id;
   }

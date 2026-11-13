@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { studentsEnabled } from "@/lib/admin";
 import { appUrl, cookieBase } from "@/lib/auth";
 import {
   createStudentToken,
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
     return res;
   };
   if (!googleConfigured()) return fail("not-ready");
+  if (!(await studentsEnabled())) return fail("off");
 
   const sp = req.nextUrl.searchParams;
   const code = sp.get("code");

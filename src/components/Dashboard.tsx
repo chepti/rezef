@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, Settings } from "lucide-react";
 import TagInput from "./tag-input";
 
 type Group = {
@@ -24,6 +24,8 @@ export default function Dashboard() {
   const [tags, setTags] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loggedOut, setLoggedOut] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [notice, setNotice] = useState("");
   const [terms, setTerms] = useState<{ classes: string[]; subjects: string[] }>({ classes: [], subjects: [] });
 
   useEffect(() => {
@@ -31,6 +33,18 @@ export default function Dashboard() {
     fetch("/api/taxonomies")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setTerms(d))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // כפתור הניהול מופיע רק למנהלת. ההרשאה נבדקת שוב בשרת בכל פעולה.
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { teacher?: { isAdmin?: boolean } } | null) => setIsAdmin(Boolean(d?.teacher?.isAdmin)))
+      .catch(() => {});
+    fetch("/api/public-settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { teacherNotice?: string } | null) => d?.teacherNotice && setNotice(d.teacherNotice))
       .catch(() => {});
   }, []);
 
@@ -88,7 +102,15 @@ export default function Dashboard() {
         <a href="/api/auth/start" className="btn btn-primary">
           כניסה עם חומר פתוח
         </a>
-        {failed && <p className="text-coral mt-6">הכניסה לא הושלמה. אפשר לנסות שוב.</p>}
+        {failed && (
+          <p className="text-coral mt-6">
+            {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("login_error") === "blocked"
+              ? "הגישה לחשבון הזה הושעתה. אפשר לפנות למנהלת המערכת."
+              : typeof window !== "undefined" && new URLSearchParams(window.location.search).get("login_error") === "closed"
+                ? "ההרשמה למערכת סגורה כרגע. אפשר לפנות למנהלת המערכת."
+                : "הכניסה לא הושלמה. אפשר לנסות שוב."}
+          </p>
+        )}
       </div>
     );
   }
@@ -98,6 +120,11 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-extrabold">הקבוצות שלי</h1>
         <div className="flex gap-2">
+          {isAdmin && (
+            <Link href="/admin" className="btn btn-ghost" data-tip="אזור ניהול: דומיינים, מורים, נתוני שימוש והגדרות">
+              <Settings size={16} strokeWidth={2} /> ניהול
+            </Link>
+          )}
           <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
             <Plus size={18} strokeWidth={2} /> קבוצה חדשה
           </button>
@@ -143,6 +170,11 @@ export default function Dashboard() {
         </form>
       )}
 
+      {notice && (
+        <p className="mb-4 rounded-2xl bg-blue-soft px-4 py-3 text-sm text-blue-dark" role="status">
+          {notice}
+        </p>
+      )}
       {error && <p className="text-coral mb-4">{error}</p>}
 
       {groups === null ? (

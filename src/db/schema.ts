@@ -17,6 +17,11 @@ export const teachers = pgTable(
     // חיבור לחשבון חומר פתוח (וורדפרס) ולחשבון Google הארגוני. שניהם אופציונליים עד שמחברים.
     wpUserId: integer("wp_user_id"),
     googleEmail: text("google_email"),
+    // מנהלת המערכת: נקבע בכל כניסה לפי הרשאת manage_options בחומר פתוח ורשימת ADMIN_EMAILS.
+    isAdmin: boolean("is_admin").notNull().default(false),
+    // הושעתה מהמערכת (המנהלת יכולה להשעות מורה בלי למחוק את הנתונים שלו).
+    blocked: boolean("blocked").notNull().default(false),
+    lastLoginAt: timestamp("last_login_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [uniqueIndex("teachers_wp_user_id_idx").on(t.wpUserId)],
@@ -245,4 +250,11 @@ export const files = pgTable("files", {
   // התוכן ב-base64.
   data: text("data").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// הגדרות מערכת שהמנהלת קובעת מהאזור שלה (מפתח וערך טקסט).
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
