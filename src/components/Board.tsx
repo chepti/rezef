@@ -62,6 +62,7 @@ import {
   Smartphone,
   Sparkles,
   StickyNote,
+  UserRoundCheck,
   Video,
   X,
 } from "lucide-react";
@@ -93,7 +94,7 @@ type Lesson = { id: number; title: string; topicId: number | null; publishedColl
 type CrossItem = { id: number; note: string; topicId: number | null; duration: string | null; item: Item };
 type BoardData = {
   group: { id: number; name: string; className: string | null; subjectName: string | null; tags: string[]; joinCode: string };
-  sequence: { id: number; currentTopicId: number | null };
+  sequence: { id: number; currentTopicId: number | null; visibility: string };
   topics: Topic[];
   lessons: Lesson[];
   crossItems: CrossItem[];
@@ -103,7 +104,9 @@ type ItemPatch = Partial<Pick<LessonItem, "phase" | "note" | "isAssignment" | "d
 // מה שנגרר מהמחסן: קישור מחומר פתוח (ייווצר פריט) או פריט קיים של המורה.
 type WhCard =
   | { kind: "os"; key: string; postId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[] }
-  | { kind: "item"; key: string; itemId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[]; placed: number };
+  | { kind: "item"; key: string; itemId: number; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[]; placed: number }
+  // פריט מרצף משותף של מורה שאני עוקבת אחריה. בגרירה הוא מועתק אליי כפריט חדש.
+  | { kind: "peer"; key: string; itemId: number; itemKind: string; url: string; title: string; imageUrl: string | null; contentType: string | null; tags: string[]; teacher: string };
 
 const PHASES = [
   { name: "הקניה", icon: Lightbulb },
@@ -736,7 +739,7 @@ const FLY_TILT = [-1.4, 1, -0.6, 1.8, -1.8, 0.6, 1.2];
 
 function Butterfly({ card, rank, onPreview }: { card: WhCard; rank: number; onPreview?: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.key, data: { card } });
-  const type = typeOf({ kind: card.kind === "os" ? "openstuff" : "link", contentType: card.contentType });
+  const type = typeOf({ kind: card.kind === "os" ? "openstuff" : card.kind === "peer" ? card.itemKind : "link", contentType: card.contentType });
   const TypeIcon = TYPE_ICON[type] ?? FileGeneric;
   // הפופולריים למעלה ומלאים; ככל שיורדים, הפריט שקוף יותר (עד חצי). ריחוף מחזיר אותו למלא.
   const fade = Math.max(0.5, 1 - rank * 0.014);
@@ -767,6 +770,12 @@ function Butterfly({ card, rank, onPreview }: { card: WhCard; rank: number; onPr
           )}
         </div>
         <div className="p-2 pt-2.5">
+          {card.kind === "peer" && (
+            <p className="mb-1 inline-flex max-w-full items-center gap-1 rounded-full bg-blue-soft px-2 py-0.5 text-[0.65rem] font-medium text-blue-dark">
+              <UserRoundCheck size={11} strokeWidth={2} />
+              <span className="truncate">{card.teacher}</span>
+            </p>
+          )}
           <p className="text-[0.8rem] font-medium leading-snug line-clamp-2">{card.title}</p>
           {card.tags.length > 0 && <p className="mt-0.5 truncate text-[0.65rem] text-muted">{card.tags.join(" · ")}</p>}
         </div>
@@ -845,7 +854,26 @@ function toOsCards(data: OsResponse): WhCard[] {
 const mergeCards = (prev: WhCard[], next: WhCard[]) => [...prev, ...next.filter((c) => !prev.some((p) => p.key === c.key))];
 
 // שכבות הטעינה של המאגר, לפי הסדר: כל שכבה נטענת עד הסוף, ואז ממשיכים לבאה.
-type Tier = { label: string; query: Record<string, string> };
+type Tier = { label: string; query: Record<string, string>; source?: "following" };
+
+type PeerResponse = {
+  total: number;
+  cards: Array<{ id: number; url: string; title: string; imageUrl: string | null; kind: string; contentType: string | null; teacher: string; lessonTitle: string }>;
+};
+function toPeerCards(data: PeerResponse): WhCard[] {
+  return data.cards.map((c) => ({
+    kind: "peer",
+    key: `wh-peer-${c.id}`,
+    itemId: c.id,
+    itemKind: c.kind,
+    url: c.url,
+    title: c.title,
+    imageUrl: c.imageUrl,
+    contentType: c.contentType,
+    teacher: c.teacher,
+    tags: c.lessonTitle ? [c.lessonTitle] : [],
+  }));
+}
 
 function Warehouse({
   groupId,
@@ -876,9 +904,12 @@ function Warehouse({
   const tiers: Tier[] = useMemo(() => {
     const scope: Record<string, string> = all ? { all: "1" } : {};
     if (typed) return [{ label: "", query: { ...scope, q: typed } }];
-    if (!autoActive) return [{ label: "", query: scope }];
+    // ראשונים: פריטים מרצפים משותפים של מורים שאני עוקבת אחריהם (לפי ההיקף שבחרתי לכל אחת), גם מה שאינו במאגר הרשמי.
+    const peers: Tier = { label: "ממורים שאת עוקבת אחריהם", source: "following", query: { q: autoActive ? autoQuery : "", topic: topicName } };
+    if (!autoActive) return [peers, { label: "מהכיתה ומהתחום", query: scope }];
     const related = { related: "1", q: autoQuery, topic: topicName };
     return [
+      peers,
       { label: `קשורים לשיעור "${autoQuery}"`, query: { ...scope, ...related } },
       ...(all ? [] : [{ label: "קשורים, מכיתות ומתחומים אחרים", query: { all: "1", ...related } }]),
       { label: all ? "עוד מהמאגר" : "עוד מהכיתה ומהתחום", query: scope },
@@ -920,9 +951,10 @@ function Warehouse({
         setOsError("");
         try {
           const params = new URLSearchParams({ group: String(groupId), page: String(cursor.page), ...tier.query });
-          const data = (await api(`/api/warehouse/openstuff?${params}`, "GET")) as OsResponse;
+          const fromPeers = tier.source === "following";
+          const data = (await api(`/api/warehouse/${fromPeers ? "following" : "openstuff"}?${params}`, "GET")) as OsResponse | PeerResponse;
           if (stale) return;
-          const cards = toOsCards(data);
+          const cards = fromPeers ? toPeerCards(data as PeerResponse) : toOsCards(data as OsResponse);
           setLists((prev) => {
             const next = first ? [] : prev.slice(0, cursor.tier + 1);
             next[cursor.tier] = cursor.page === 1 ? cards : mergeCards(next[cursor.tier] ?? [], cards);
@@ -936,7 +968,8 @@ function Warehouse({
           setLoadedFor(`${tiersKey}|${cursor.tier}|${cursor.page}`);
           // שכבה שהסתיימה עם מעט פריטים ממשיכה מעצמה לשכבה הבאה, כדי שהמסך לא יישאר ריק.
           const before = first ? 0 : listsRef.current.slice(0, cursor.tier).reduce((sum, l) => sum + (l?.length ?? 0), 0);
-          const tierEnded = cards.length === 0 || cursor.page * 24 >= data.total;
+          // ההמלצות מעמיתות מגיעות בעמוד אחד.
+          const tierEnded = fromPeers || cards.length === 0 || cursor.page * 24 >= data.total;
           if (tierEnded && cursor.tier < tiers.length - 1 && before + data.total < 14) setCursor({ tier: cursor.tier + 1, page: 1 });
         } catch (e) {
           if (!stale) setOsError(e instanceof Error ? e.message : "שגיאה");
@@ -1015,7 +1048,8 @@ function Warehouse({
     return () => io.disconnect();
   }, [hasMore, loadMore, tab]);
 
-  const relatedEmpty = autoActive && !typed && settled && cursor.tier > 0 && sections[0].cards.length === 0;
+  const relatedIdx = tiers.findIndex((t) => t.query.related === "1" && t.query.all !== "1");
+  const relatedEmpty = autoActive && !typed && settled && relatedIdx >= 0 && cursor.tier > relatedIdx && sections[relatedIdx].cards.length === 0;
   let rank = 0;
 
   return (
@@ -1455,7 +1489,7 @@ export default function Board({ groupId }: { groupId: number }) {
       const card = (e.active.data.current as { card: WhCard }).card;
       draggedCard.current = card;
       setDragKind("item");
-      setDragCard({ title: card.title, imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link" });
+      setDragCard({ title: card.title, imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : card.kind === "peer" ? card.itemKind : "link" });
     } else if (id.startsWith("li-") && data) {
       const li = data.lessons.flatMap((l) => l.items).find((x) => x.id === Number(id.slice(3)));
       setDragKind("item");
@@ -1540,11 +1574,15 @@ export default function Board({ groupId }: { groupId: number }) {
         } else if (activeId.startsWith("wh-")) {
           const card = draggedCard.current ?? (e.active.data.current as { card?: WhCard } | undefined)?.card;
           if (!card) throw new Error("הכרטיס נעלם באמצע הגרירה. נסו שוב");
-          await api(
-            `/api/groups/${groupId}/cross`,
-            "POST",
-            card.kind === "os" ? { urls: [card.url], topicId: currentTopicId } : { itemId: card.itemId, topicId: currentTopicId },
-          );
+          if (card.kind === "peer") {
+            await api("/api/items/copy", "POST", { sourceItemId: card.itemId, groupId, topicId: currentTopicId });
+          } else {
+            await api(
+              `/api/groups/${groupId}/cross`,
+              "POST",
+              card.kind === "os" ? { urls: [card.url], topicId: currentTopicId } : { itemId: card.itemId, topicId: currentTopicId },
+            );
+          }
         }
         setCrossOpen(true);
         await load();
@@ -1571,6 +1609,8 @@ export default function Board({ groupId }: { groupId: number }) {
       try {
         if (card.kind === "os") {
           await api(`/api/lessons/${dest.lessonId}/links`, "POST", { urls: [card.url], index: dest.index });
+        } else if (card.kind === "peer") {
+          await api("/api/items/copy", "POST", { sourceItemId: card.itemId, lessonId: dest.lessonId, index: dest.index });
         } else {
           await api(`/api/lessons/${dest.lessonId}/items`, "POST", { itemId: card.itemId, index: dest.index });
         }
@@ -1810,6 +1850,7 @@ export default function Board({ groupId }: { groupId: number }) {
           terms={terms}
           topics={data.topics}
           lessonCounts={lessonCounts}
+          shared={data.sequence.visibility === "followable"}
           onTopicsChanged={load}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {

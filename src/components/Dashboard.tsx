@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Settings } from "lucide-react";
+import { ArrowLeft, Plus, Settings, UsersRound } from "lucide-react";
 import TagInput from "./tag-input";
 
 type Group = {
@@ -115,6 +115,9 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-extrabold">הקבוצות שלי</h1>
         <div className="flex gap-2">
+          <Link href="/teachers" className="btn btn-ghost" data-tip="מורים ששיתפו רצף: צפייה, מעקב וקבלת הצעות מהם בזמן בנייה">
+            <UsersRound size={16} strokeWidth={2} /> מורים
+          </Link>
           {isAdmin && (
             <Link href="/admin" className="btn btn-ghost" data-tip="אזור ניהול: דומיינים, מורים, נתוני שימוש והגדרות">
               <Settings size={16} strokeWidth={2} /> ניהול

@@ -168,6 +168,7 @@ export default function GroupSettings({
   terms,
   topics,
   lessonCounts,
+  shared,
   onSaved,
   onTopicsChanged,
   onClose,
@@ -176,6 +177,7 @@ export default function GroupSettings({
   terms: Terms;
   topics: Topic[];
   lessonCounts: Record<number, number>;
+  shared: boolean;
   onSaved: () => void;
   onTopicsChanged: () => void;
   onClose: () => void;
@@ -186,6 +188,20 @@ export default function GroupSettings({
   const [tags, setTags] = useState<string[]>(group.tags ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [isShared, setIsShared] = useState(shared);
+
+  // שיתוף הרצף עם מורים אחרים. נשמר מיד, בלי כפתור השמירה.
+  async function toggleShared() {
+    const next = !isShared;
+    setIsShared(next);
+    try {
+      await call(`/api/groups/${group.id}/sharing`, "POST", { shared: next });
+      onTopicsChanged();
+    } catch (err) {
+      setIsShared(!next);
+      setError(err instanceof Error ? err.message : "השמירה נכשלה");
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -226,6 +242,24 @@ export default function GroupSettings({
             תגיות נוספות
           </p>
           <TagInput value={tags} onChange={setTags} />
+        </div>
+        <div className="md:col-span-2 flex items-start gap-3 rounded-2xl bg-page px-4 py-3">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isShared}
+            aria-label="שיתוף הרצף עם מורים אחרים"
+            onClick={toggleShared}
+            className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition ${isShared ? "bg-blue" : "bg-line"}`}
+          >
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${isShared ? "start-[1.4rem]" : "start-0.5"}`} />
+          </button>
+          <div>
+            <p className="font-medium">שיתוף הרצף עם מורים אחרים</p>
+            <p className="text-sm text-muted">
+              מורים אחרים יוכלו לצפות ברצף ולעקוב אחרייך, והפריטים שלך יוצעו להם כשהם בונים. לא משותפים: התלמידים, ההגשות וההערות שלך (חוץ מהערה שסימנת לשיתוף).
+            </p>
+          </div>
         </div>
         {error && <p className="md:col-span-2 text-sm text-coral">{error}</p>}
         <div className="md:col-span-2 flex gap-2">

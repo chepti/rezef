@@ -258,3 +258,22 @@ export const appSettings = pgTable("app_settings", {
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// מעקב של מורה אחרי מורה. ההיקף קובע מתי התוכן של המורה שעוקבים אחריה מוצע במאגר:
+// רשימות ריקות = תמיד; אחרת רק כשבונים רצף בתחום או בכיתה שנבחרו.
+export const teacherFollows = pgTable(
+  "teacher_follows",
+  {
+    id: serial("id").primaryKey(),
+    followerId: integer("follower_id")
+      .notNull()
+      .references(() => teachers.id, { onDelete: "cascade" }),
+    followedId: integer("followed_id")
+      .notNull()
+      .references(() => teachers.id, { onDelete: "cascade" }),
+    subjects: jsonb("subjects").$type<string[]>().notNull().default([]),
+    classes: jsonb("classes").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("teacher_follows_pair_idx").on(t.followerId, t.followedId)],
+);

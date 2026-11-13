@@ -71,6 +71,13 @@
       "when": 1794557928852,
       "tag": "0009_ancient_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794561405435,
+      "tag": "0010_worthless_shooting_star",
+      "breakpoints": true
     }
   ]
 }
