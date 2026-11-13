@@ -23,6 +23,7 @@ import Rope from "./board-rope";
 import PublishDialog, { type Terms } from "./board-publish";
 import PublishLessonDialog from "./board-publish-lesson";
 import PreviewDialog from "./board-preview";
+import LinkPreviewDialog from "./board-link-preview";
 import LessonMode from "./board-lesson-mode";
 import SubmissionsDialog from "./board-submissions";
 import { imageFiles, imageFileToDataUrl } from "./image-upload";
@@ -47,6 +48,7 @@ import {
   Library,
   Link2,
   Eye,
+  ExternalLink,
   EyeOff,
   GraduationCap,
   MonitorPlay,
@@ -285,6 +287,7 @@ function ItemRow({
   onType,
   subs,
   onSubs,
+  onPreview,
 }: {
   li: LessonItem;
   expanded: boolean;
@@ -295,6 +298,7 @@ function ItemRow({
   onType: (type: string) => void;
   subs?: { submitted: number; help: number; members: number };
   onSubs: () => void;
+  onPreview: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
@@ -313,15 +317,14 @@ function ItemRow({
     >
       <div className="flex items-center gap-2.5 p-1.5 cursor-grab touch-none" {...attributes} {...listeners}>
         <Thumb item={li.item} size={expanded ? 44 : 34} />
-        <a
-          href={li.item.url}
-          target="_blank"
-          rel="noreferrer"
-          draggable={false}
-          className={`min-w-0 flex-1 font-medium leading-snug hover:text-blue-dark ${expanded ? "line-clamp-2 text-[0.95rem]" : "truncate text-sm"}`}
+        <button
+          type="button"
+          className={`min-w-0 flex-1 text-start font-medium leading-snug hover:text-blue-dark ${expanded ? "line-clamp-2 text-[0.95rem]" : "truncate text-sm"}`}
+          aria-expanded={expanded}
+          onClick={onToggle}
         >
           {li.item.title}
-        </a>
+        </button>
         <div className="flex items-center gap-1.5 text-muted shrink-0 pe-1">
           {duration && (
             <span className="text-orange" data-tip={duration.label}>
@@ -361,6 +364,21 @@ function ItemRow({
           <span data-tip={itemType} style={{ color: TYPE_COLOR[itemType] ?? "var(--ink)" }}>
             <TypeIcon size={15} strokeWidth={2} />
           </span>
+          <button type="button" className="btn-icon !p-1" data-tip="תצוגה מקדימה" aria-label="תצוגה מקדימה" onPointerDown={stop} onClick={onPreview}>
+            <Info size={15} strokeWidth={2} />
+          </button>
+          <a
+            className="btn-icon !p-1"
+            href={li.item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            draggable={false}
+            data-tip="פתיחה בחלון חדש"
+            aria-label="פתיחה בחלון חדש"
+            onPointerDown={stop}
+          >
+            <ExternalLink size={15} strokeWidth={2} />
+          </a>
           <button
             type="button"
             className="btn-icon !p-1"
@@ -542,6 +560,7 @@ function LessonColumn({
   onItemType,
   subCounts,
   onSubs,
+  onPreview,
   onAddImages,
   onPublishLesson,
   onPresent,
@@ -565,6 +584,7 @@ function LessonColumn({
   onItemType: (itemId: number, type: string) => void;
   subCounts: SubCounts;
   onSubs: (li: LessonItem) => void;
+  onPreview: (li: LessonItem) => void;
   onAddImages: (files: File[]) => void;
   onPublishLesson: () => void;
   onPresent: () => void;
@@ -691,6 +711,7 @@ function LessonColumn({
               onType={(type) => onItemType(li.itemId, type)}
               subs={subCounts.members ? { members: subCounts.members, submitted: subCounts.counts[li.id]?.submitted ?? 0, help: subCounts.counts[li.id]?.help ?? 0 } : undefined}
               onSubs={() => onSubs(li)}
+              onPreview={() => onPreview(li)}
             />
           ))}
         </div>
@@ -1270,6 +1291,7 @@ export default function Board({ groupId }: { groupId: number }) {
   const [presenting, setPresenting] = useState<number | null>(null);
   const [subCounts, setSubCounts] = useState<SubCounts>({ members: 0, counts: {} });
   const [subsFor, setSubsFor] = useState<LessonItem | null>(null);
+  const [previewFor, setPreviewFor] = useState<LessonItem | null>(null);
   const [crossOpen, setCrossOpen] = useState(true);
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
@@ -1284,6 +1306,8 @@ export default function Board({ groupId }: { groupId: number }) {
   const [terms, setTerms] = useState<Terms>({ classes: [], subjects: [], categories: [] });
   const [notice, setNotice] = useState("");
   const activeRef = useRef<number | null>(null);
+  // הכרטיס שנגרר מהמאגר. נשמר בנפרד, כי אם המאגר נטען מחדש באמצע הגרירה הכרטיס נעלם מה-DOM ו-dnd-kit מאבד את הנתונים שלו.
+  const draggedCard = useRef<WhCard | null>(null);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -1429,6 +1453,7 @@ export default function Board({ groupId }: { groupId: number }) {
     const id = String(e.active.id);
     if (id.startsWith("wh-")) {
       const card = (e.active.data.current as { card: WhCard }).card;
+      draggedCard.current = card;
       setDragKind("item");
       setDragCard({ title: card.title, imageUrl: card.imageUrl, kind: card.kind === "os" ? "openstuff" : "link" });
     } else if (id.startsWith("li-") && data) {
@@ -1454,6 +1479,7 @@ export default function Board({ groupId }: { groupId: number }) {
   }
 
   function resetDrag() {
+    draggedCard.current = null;
     setDragCard(null);
     setDragKind(null);
     setDragFromCross(false);
@@ -1462,8 +1488,14 @@ export default function Board({ groupId }: { groupId: number }) {
   }
 
   async function onDragEnd(e: DragEndEvent) {
+    // resetDrag מאפס את הכרטיס השמור, ולכן קוראים אותו קודם.
+    const dragged = draggedCard.current;
     resetDrag();
-    if (!data || !e.over) return;
+    draggedCard.current = dragged;
+    if (!data || !e.over) {
+      draggedCard.current = null;
+      return;
+    }
     const activeId = String(e.active.id);
     const overId = String(e.over.id);
     if (activeId === overId) return;
@@ -1506,7 +1538,8 @@ export default function Board({ groupId }: { groupId: number }) {
         if (activeId.startsWith("li-")) {
           await api(`/api/lesson-items/${Number(activeId.slice(3))}/to-cross`, "POST", { topicId: currentTopicId });
         } else if (activeId.startsWith("wh-")) {
-          const card = (e.active.data.current as { card: WhCard }).card;
+          const card = draggedCard.current ?? (e.active.data.current as { card?: WhCard } | undefined)?.card;
+          if (!card) throw new Error("הכרטיס נעלם באמצע הגרירה. נסו שוב");
           await api(
             `/api/groups/${groupId}/cross`,
             "POST",
@@ -1528,7 +1561,11 @@ export default function Board({ groupId }: { groupId: number }) {
     if (!dest) return;
 
     if (activeId.startsWith("wh-")) {
-      const card = (e.active.data.current as { card: WhCard }).card;
+      const card = draggedCard.current ?? (e.active.data.current as { card?: WhCard } | undefined)?.card;
+      if (!card) {
+        setError("הכרטיס נעלם באמצע הגרירה. נסו שוב");
+        return;
+      }
       setActiveLesson(dest.lessonId);
       setBusy(true);
       try {
@@ -1690,6 +1727,8 @@ export default function Board({ groupId }: { groupId: number }) {
 
   function hoverLesson(id: number) {
     if (enterTimer.current) clearTimeout(enterTimer.current);
+    // בזמן גרירה השיעור הפעיל לא מתחלף: זה היה משנה את חיפוש המאגר ומטעין אותו מחדש מתחת לכרטיס שנגרר.
+    if (dragKind) return;
     // השהיה קצרה: מעבר עכבר חולף בין שיעורים לא יגרום לקפיצות פריסה.
     enterTimer.current = setTimeout(() => setActiveLesson(id), 140);
   }
@@ -1797,6 +1836,20 @@ export default function Board({ groupId }: { groupId: number }) {
         />
       )}
 
+      {previewFor &&
+        (previewFor.item.kind === "openstuff" && previewFor.item.openstuffPostId ? (
+          <PreviewDialog postId={previewFor.item.openstuffPostId} fallbackTitle={previewFor.item.title} onClose={() => setPreviewFor(null)} />
+        ) : (
+          <LinkPreviewDialog
+            title={previewFor.item.title}
+            url={previewFor.item.url}
+            imageUrl={previewFor.item.imageUrl}
+            siteName={previewFor.item.siteName}
+            isImage={previewFor.item.kind === "image"}
+            onClose={() => setPreviewFor(null)}
+          />
+        ))}
+
       {subsFor && (
         <SubmissionsDialog
           lessonItemId={subsFor.id}
@@ -1889,6 +1942,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onToggleOpen={() => toggleLessonOpen(l)}
                       subCounts={subCounts}
                       onSubs={setSubsFor}
+                      onPreview={setPreviewFor}
                       onAddImages={(files) => addImages(l.id, files)}
                     />
                   ))}
