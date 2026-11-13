@@ -28,8 +28,11 @@ import LessonMode from "./board-lesson-mode";
 import SubmissionsDialog from "./board-submissions";
 import { imageFiles, imageFileToDataUrl } from "./image-upload";
 import GroupSettings from "./board-settings";
+import { ActivityDialog, HtmlDialog, looksLikeHtml, type HtmlTarget } from "./board-html";
 import {
+  ChartColumn,
   Check,
+  CodeXml,
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
@@ -291,6 +294,9 @@ function ItemRow({
   subs,
   onSubs,
   onPreview,
+  act,
+  onActivity,
+  onEditHtml,
 }: {
   li: LessonItem;
   expanded: boolean;
@@ -302,6 +308,10 @@ function ItemRow({
   subs?: { submitted: number; help: number; members: number };
   onSubs: () => void;
   onPreview: () => void;
+  // פעילות HTML: כמה תלמידים עבדו בה ומה אחוז ההצלחה הממוצע.
+  act?: { students: number; percent: number | null; members: number };
+  onActivity: () => void;
+  onEditHtml: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
@@ -354,6 +364,23 @@ function ItemRow({
                 <Pin size={14} strokeWidth={2} />
               </span>
             ))}
+          {li.item.kind === "html" && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full bg-blue-soft px-2 py-0.5 text-xs font-medium tabular-nums text-blue-dark transition hover:bg-blue/20"
+              data-tip={
+                act && act.members > 0
+                  ? `עבדו ${act.students} מתוך ${act.members}${act.percent != null ? `, הצלחה ממוצעת ${act.percent}%` : ""}. לחצו לנתונים`
+                  : "נתוני השימוש של התלמידים בפעילות"
+              }
+              aria-label="נתוני שימוש"
+              onPointerDown={stop}
+              onClick={onActivity}
+            >
+              <ChartColumn size={12} strokeWidth={2} />
+              {act && act.members > 0 ? `${act.students}/${act.members}` : null}
+            </button>
+          )}
           {li.note && !expanded && (
             <span data-tip="יש הערה">
               <StickyNote size={14} strokeWidth={2} />
@@ -447,6 +474,11 @@ function ItemRow({
                   <Send size={16} strokeWidth={2} />
                 </button>
               ))}
+            {li.item.kind === "html" && (
+              <button className="btn-icon !p-1.5" data-tip="עדכון הקוד של הפעילות (למשל אחרי הוספת שכבת דיווח)" aria-label="עדכון הקוד" onClick={onEditHtml}>
+                <CodeXml size={16} strokeWidth={2} />
+              </button>
+            )}
             <button className="btn-icon !p-1.5 ms-auto" data-tip="הסרה מהשיעור" aria-label="הסרה" onClick={onDelete}>
               <X size={16} strokeWidth={2} />
             </button>
@@ -508,7 +540,18 @@ function ItemRow({
   );
 }
 
-function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void; busy: boolean; compact?: boolean }) {
+function PasteZone({
+  onUrls,
+  busy,
+  compact,
+  onHtml,
+}: {
+  onUrls: (urls: string[]) => void;
+  busy: boolean;
+  compact?: boolean;
+  // כשמוגדר: אפשר להדביק כאן גם קוד HTML שלם, ויש כפתור שפותח את חלון ההדבקה.
+  onHtml?: (html?: string) => void;
+}) {
   const [value, setValue] = useState("");
   function submit(text: string) {
     const urls = extractUrls(text);
@@ -518,15 +561,31 @@ function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void
     }
   }
   return (
-    <div className={`rounded-xl border border-dashed border-blue/40 bg-blue-soft/40 ${compact ? "px-2 py-1.5" : "p-2.5"}`}>
+    <div className={`flex items-center gap-1 rounded-xl border border-dashed border-blue/40 bg-blue-soft/40 ${compact ? "px-2 py-1.5" : "p-2.5"}`}>
+      {onHtml && (
+        <button
+          type="button"
+          className="btn-icon shrink-0 !p-1 !text-blue-dark"
+          data-tip="הדבקת קוד HTML: משחק, לומדה או סימולציה מקנבס של בינה, עם נתוני שימוש"
+          aria-label="הדבקת קוד HTML"
+          onClick={() => onHtml()}
+        >
+          <CodeXml size={16} strokeWidth={2} />
+        </button>
+      )}
       <input
         className="w-full bg-transparent outline-none text-sm placeholder:text-blue-dark/60 text-center"
-        placeholder={busy ? "מוסיפים…" : "הדביקו קישור/ים"}
+        placeholder={busy ? "מוסיפים…" : onHtml ? "הדביקו קישור/ים או קוד HTML" : "הדביקו קישור/ים"}
         value={value}
         disabled={busy}
         onChange={(e) => setValue(e.target.value)}
         onPaste={(e) => {
           const text = e.clipboardData.getData("text");
+          if (onHtml && looksLikeHtml(text)) {
+            e.preventDefault();
+            onHtml(text);
+            return;
+          }
           if (extractUrls(text).length) {
             e.preventDefault();
             submit(text);
@@ -543,6 +602,8 @@ function PasteZone({ onUrls, busy, compact }: { onUrls: (urls: string[]) => void
 
 // כמה תלמידים בקבוצה, ולכל מטלה כמה הגישו וכמה ביקשו עזרה.
 type SubCounts = { members: number; counts: Record<number, { submitted: number; help: number }> };
+// לכל פעילות HTML: כמה תלמידים עבדו בה ואחוז ההצלחה הממוצע.
+type ActCounts = Record<number, { students: number; percent: number | null }>;
 
 function LessonColumn({
   lesson,
@@ -568,7 +629,13 @@ function LessonColumn({
   onPublishLesson,
   onPresent,
   onToggleOpen,
+  actCounts,
+  onActivity,
+  onHtml,
 }: {
+  actCounts: ActCounts;
+  onActivity: (li: LessonItem) => void;
+  onHtml: (target: HtmlTarget) => void;
   lesson: Lesson;
   index: number;
   color: string;
@@ -618,6 +685,13 @@ function LessonColumn({
         if (images.length) {
           e.preventDefault();
           onAddImages(images);
+          return;
+        }
+        // קובץ HTML שנגרר מהמחשב (למשל הורדה של ארטיפקט) נפתח בחלון ההדבקה.
+        const htmlFile = [...e.dataTransfer.files].find((f) => f.type === "text/html" || /\.html?$/i.test(f.name));
+        if (htmlFile) {
+          e.preventDefault();
+          htmlFile.text().then((html) => onHtml({ lessonId: lesson.id, html }));
           return;
         }
         const text = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
@@ -715,6 +789,9 @@ function LessonColumn({
               subs={subCounts.members ? { members: subCounts.members, submitted: subCounts.counts[li.id]?.submitted ?? 0, help: subCounts.counts[li.id]?.help ?? 0 } : undefined}
               onSubs={() => onSubs(li)}
               onPreview={() => onPreview(li)}
+              act={li.item.kind === "html" ? { members: subCounts.members, students: actCounts[li.id]?.students ?? 0, percent: actCounts[li.id]?.percent ?? null } : undefined}
+              onActivity={() => onActivity(li)}
+              onEditHtml={() => onHtml({ itemId: li.itemId })}
             />
           ))}
         </div>
@@ -725,7 +802,7 @@ function LessonColumn({
           שחררו כאן
         </div>
       ) : (
-        <PasteZone onUrls={onAddUrls} busy={busy} compact />
+        <PasteZone onUrls={onAddUrls} busy={busy} compact onHtml={(html) => onHtml({ lessonId: lesson.id, html })} />
       )}
     </section>
   );
@@ -1326,6 +1403,9 @@ export default function Board({ groupId }: { groupId: number }) {
   const [subCounts, setSubCounts] = useState<SubCounts>({ members: 0, counts: {} });
   const [subsFor, setSubsFor] = useState<LessonItem | null>(null);
   const [previewFor, setPreviewFor] = useState<LessonItem | null>(null);
+  const [actCounts, setActCounts] = useState<ActCounts>({});
+  const [activityFor, setActivityFor] = useState<LessonItem | null>(null);
+  const [htmlFor, setHtmlFor] = useState<HtmlTarget | null>(null);
   const [crossOpen, setCrossOpen] = useState(true);
   const [warehouseKey, setWarehouseKey] = useState(0);
   const [dragCard, setDragCard] = useState<{ title: string; imageUrl: string | null; kind: string } | null>(null);
@@ -1372,6 +1452,11 @@ export default function Board({ groupId }: { groupId: number }) {
       api(`/api/groups/${groupId}/submission-counts`, "GET")
         .then((c: SubCounts) => setSubCounts(c))
         .catch(() => {});
+      if (board.lessons.some((l) => l.items.some((li) => li.item.kind === "html"))) {
+        api(`/api/groups/${groupId}/activity-counts`, "GET")
+          .then((c: { counts: ActCounts }) => setActCounts(c.counts))
+          .catch(() => {});
+      }
       const topicId = board.sequence.currentTopicId;
       setActiveLesson((cur) =>
         cur != null && board.lessons.some((l) => l.id === cur && l.topicId === topicId) ? cur : firstLessonOf(board, topicId),
@@ -1455,7 +1540,14 @@ export default function Board({ groupId }: { groupId: number }) {
         addImages(target, images);
         return;
       }
-      const urls = extractUrls(e.clipboardData?.getData("text") ?? "");
+      const pasted = e.clipboardData?.getData("text") ?? "";
+      // קוד HTML שלם (מקנבס של בינה) נפתח בחלון ההדבקה של השיעור הפעיל.
+      if (target && looksLikeHtml(pasted)) {
+        e.preventDefault();
+        setHtmlFor({ lessonId: target, html: pasted });
+        return;
+      }
+      const urls = extractUrls(pasted);
       if (urls.length && target) {
         e.preventDefault();
         addUrls(target, urls);
@@ -1902,6 +1994,29 @@ export default function Board({ groupId }: { groupId: number }) {
         />
       )}
 
+      {activityFor && (
+        <ActivityDialog
+          lessonItemId={activityFor.id}
+          title={activityFor.item.title}
+          url={activityFor.item.url}
+          onClose={() => {
+            setActivityFor(null);
+            load();
+          }}
+        />
+      )}
+
+      {htmlFor && (
+        <HtmlDialog
+          target={htmlFor}
+          onClose={() => setHtmlFor(null)}
+          onSaved={() => {
+            setHtmlFor(null);
+            load();
+          }}
+        />
+      )}
+
       {publishLessonFor && (
         <PublishLessonDialog
           lesson={publishLessonFor}
@@ -1985,6 +2100,9 @@ export default function Board({ groupId }: { groupId: number }) {
                       onSubs={setSubsFor}
                       onPreview={setPreviewFor}
                       onAddImages={(files) => addImages(l.id, files)}
+                      actCounts={actCounts}
+                      onActivity={setActivityFor}
+                      onHtml={setHtmlFor}
                     />
                   ))}
                   <button className="btn btn-ghost shrink-0 self-start mt-1" onClick={addLesson}>

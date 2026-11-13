@@ -277,3 +277,58 @@ export const teacherFollows = pgTable(
   },
   (t) => [uniqueIndex("teacher_follows_pair_idx").on(t.followerId, t.followedId)],
 );
+
+// פעילות HTML שהמורה הדביקה (משחק, לומדה או סימולציה מקנבס של בינה). הקוד נשמר כאן ומוגש מכתובת אקראית
+// בתוך ארגז חול (בלי גישה לעוגיות ולנתוני האתר). לכל פעילות יש פריט (items) מסוג html שמצביע אליה.
+export const htmlActivities = pgTable("html_activities", {
+  id: serial("id").primaryKey(),
+  token: text("token").notNull().unique(),
+  teacherId: integer("teacher_id")
+    .notNull()
+    .references(() => teachers.id),
+  itemId: integer("item_id")
+    .notNull()
+    .references(() => items.id, { onDelete: "cascade" }),
+  html: text("html").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ActivityAnswer = {
+  // מזהה השאלה בתוך הפעילות, נוסח השאלה, והמושג או המיומנות שהיא בודקת.
+  id?: string;
+  q?: string;
+  concept?: string;
+  // true/false לשאלה שנבדקת אוטומטית; null לתשובה פתוחה שהמורה קוראת בעצמה.
+  correct: boolean | null;
+  response?: string;
+  expected?: string;
+  at: number;
+};
+
+// ניסיון אחד של תלמיד בפעילות HTML: כל פתיחה של הפעילות היא ניסיון. הדיווח מגיע מהדף של התלמיד בזמן העבודה.
+export const activityAttempts = pgTable(
+  "activity_attempts",
+  {
+    id: serial("id").primaryKey(),
+    membershipId: integer("membership_id")
+      .notNull()
+      .references(() => memberships.id, { onDelete: "cascade" }),
+    lessonItemId: integer("lesson_item_id")
+      .notNull()
+      .references(() => lessonItems.id, { onDelete: "cascade" }),
+    // מזהה אקראי שהדפדפן בוחר לניסיון, כדי שדיווחים חוזרים יעדכנו את אותה שורה.
+    clientKey: text("client_key").notNull(),
+    // זמן עבודה פעיל בשניות (הלשונית גלויה והתלמיד פעיל), לא הזמן שהחלון היה פתוח.
+    activeSeconds: integer("active_seconds").notNull().default(0),
+    answers: jsonb("answers").$type<ActivityAnswer[]>().notNull().default([]),
+    progress: integer("progress"),
+    finished: boolean("finished").notNull().default(false),
+    score: integer("score"),
+    maxScore: integer("max_score"),
+    summary: text("summary").notNull().default(""),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("activity_attempts_key_idx").on(t.membershipId, t.lessonItemId, t.clientKey)],
+);

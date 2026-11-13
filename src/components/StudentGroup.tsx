@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ExternalLink, Eye, Frown, LifeBuoy, Meh, MessageSquareText, Pin, Smile, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CloudOff, ExternalLink, Eye, Frown, LifeBuoy, Meh, MessageSquareText, Pin, ShieldCheck, Smile, X } from "lucide-react";
 import { TYPE_META, typeOf } from "./content-types";
+import { useActivityTracker } from "./activity-tracker";
 
 type Submission = { answer: string; link: string | null; rating: number | null; needsHelp: boolean; feedback: string; updatedAt: string };
 type ViewItem = {
@@ -133,8 +134,12 @@ function Viewer({
   const type = typeOf(item);
   const { icon: Icon, color } = TYPE_META[type];
   const isImage = item.kind === "image";
+  // פעילות HTML שהמורה הדביקה: מוצגת תמיד בתוך הדף, בארגז חול, והעבודה בה נמדדת ונשמרת למורה.
+  const isHtml = item.kind === "html";
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const tracking = useActivityTracker(frame, item.id, isHtml && !isTeacher);
   // undefined = עדיין בודקים אם אפשר להציג בתוך הדף, null = אי אפשר.
-  const [embedUrl, setEmbedUrl] = useState<string | null | undefined>(isImage ? null : undefined);
+  const [embedUrl, setEmbedUrl] = useState<string | null | undefined>(isImage ? null : isHtml ? item.url : undefined);
   const [answer, setAnswer] = useState(item.submission?.answer ?? "");
   const [link, setLink] = useState(item.submission?.link ?? "");
   const [rating, setRating] = useState<number | null>(item.submission?.rating ?? null);
@@ -143,7 +148,7 @@ function Viewer({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (isImage) return;
+    if (isImage || isHtml) return;
     let stale = false;
     const path = isTeacher ? `/api/embed?url=${encodeURIComponent(item.url)}` : `/api/student/items/${item.id}/embed`;
     fetch(path)
@@ -153,7 +158,7 @@ function Viewer({
     return () => {
       stale = true;
     };
-  }, [item.id, item.url, isImage, isTeacher]);
+  }, [item.id, item.url, isImage, isHtml, isTeacher]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -195,9 +200,27 @@ function Viewer({
           <Icon size={18} strokeWidth={2} />
         </span>
         <h2 className="min-w-0 flex-1 truncate text-lg font-extrabold">{item.title}</h2>
-        <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
-          <ExternalLink size={16} strokeWidth={2} /> פתיחה בלשונית
-        </a>
+        {isHtml ? (
+          <span
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${tracking === "offline" ? "bg-coral/10 text-coral" : "bg-green-600/10 text-green-800"}`}
+            role="status"
+            data-tip={
+              isTeacher
+                ? "אצל התלמידים נמדדים כאן זמן העבודה והתשובות. בתצוגה מקדימה שום דבר לא נשמר"
+                : tracking === "offline"
+                  ? "אין חיבור כרגע. העבודה תישלח כשהחיבור יחזור"
+                  : "המורה רואה כמה זמן עבדת ומה ענית בפעילות הזו"
+            }
+            data-tip-pos="below"
+          >
+            {tracking === "offline" ? <CloudOff size={15} strokeWidth={2} /> : <ShieldCheck size={15} strokeWidth={2} />}
+            {isTeacher ? "תצוגה מקדימה" : tracking === "offline" ? "אין חיבור" : "העבודה נשמרת למורה"}
+          </span>
+        ) : (
+          <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={16} strokeWidth={2} /> פתיחה בלשונית
+          </a>
+        )}
         <button type="button" className="btn btn-ghost" onClick={onClose}>
           <X size={16} strokeWidth={2} /> סגירה
         </button>
@@ -210,13 +233,18 @@ function Viewer({
             <img src={item.url} alt={item.title} className="absolute inset-0 h-full w-full object-contain" />
           ) : embedUrl ? (
             <iframe
+              ref={frame}
               className="absolute inset-0 h-full w-full"
               src={embedUrl}
               title={item.title}
               allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write"
               allowFullScreen
-              // התוכן המוטמע לא רשאי להחליף את הדף.
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
+              // התוכן המוטמע לא רשאי להחליף את הדף. קוד שהמורה הדביקה רץ בלי allow-same-origin: אין לו גישה לעוגיות ולנתוני האתר.
+              sandbox={
+                isHtml
+                  ? "allow-scripts allow-forms allow-modals allow-pointer-lock allow-popups allow-downloads"
+                  : "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
+              }
               referrerPolicy="strict-origin-when-cross-origin"
             />
           ) : (

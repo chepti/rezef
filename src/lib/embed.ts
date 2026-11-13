@@ -88,6 +88,9 @@ export async function resolveEmbed(rawUrl: string): Promise<EmbedResult> {
   } catch {
     return { embedUrl: null, provider: null };
   }
+  // פעילות HTML שהמורה הדביקה מוגשת מהאתר עצמו (בארגז חול), ותמיד מוצגת בתוך הדף.
+  const own = (process.env.APP_URL ?? "").replace(/\/$/, "");
+  if (own && rawUrl.startsWith(`${own}/h/`)) return { embedUrl: rawUrl, provider: "הרצף" };
   const direct = known(u);
   if (direct) return direct;
   const oembed = await viaOembed(u.toString());

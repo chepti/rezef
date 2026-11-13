@@ -78,6 +78,13 @@
       "when": 1794561405435,
       "tag": "0010_worthless_shooting_star",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794562562318,
+      "tag": "0011_html_activities",
+      "breakpoints": true
     }
   ]
 }
