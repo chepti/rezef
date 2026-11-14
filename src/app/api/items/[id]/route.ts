@@ -3,7 +3,7 @@ import { updateItem } from "@/lib/board";
 import { numId, readJson, withTeacher } from "@/lib/http";
 import { CONTENT_TYPES } from "@/lib/unfurl";
 
-const schema = z.object({ contentType: z.enum(CONTENT_TYPES).optional() });
+const schema = z.object({ contentType: z.enum(CONTENT_TYPES).optional(), title: z.string().min(1).max(200).optional() });
 
 export async function PATCH(req: Request, ctx: RouteContext<"/api/items/[id]">) {
   const { id } = await ctx.params;

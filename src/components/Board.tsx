@@ -33,6 +33,8 @@ import {
   ChartColumn,
   Check,
   CodeXml,
+  Files,
+  Pencil,
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
@@ -297,6 +299,7 @@ function ItemRow({
   act,
   onActivity,
   onEditHtml,
+  onRename,
 }: {
   li: LessonItem;
   expanded: boolean;
@@ -312,9 +315,13 @@ function ItemRow({
   act?: { students: number; percent: number | null; members: number };
   onActivity: () => void;
   onEditHtml: () => void;
+  onRename: (title: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `li-${li.id}` });
   const [note, setNote] = useState(li.note);
+  // שינוי שם: לחיצה כפולה על הכותרת או על העיפרון. נשמר ב-Enter או ביציאה מהשדה, ו-Esc מבטל.
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(li.item.title);
   const itemType = typeOf(li.item);
   const TypeIcon = TYPE_ICON[itemType] ?? FileGeneric;
   const phase = PHASES.find((p) => p.name === li.phase);
@@ -330,14 +337,45 @@ function ItemRow({
     >
       <div className="flex items-center gap-2.5 p-1.5 cursor-grab touch-none" {...attributes} {...listeners}>
         <Thumb item={li.item} size={expanded ? 44 : 34} />
-        <button
-          type="button"
-          className={`min-w-0 flex-1 text-start font-medium leading-snug hover:text-blue-dark ${expanded ? "line-clamp-2 text-[0.95rem]" : "truncate text-sm"}`}
-          aria-expanded={expanded}
-          onClick={onToggle}
-        >
-          {li.item.title}
-        </button>
+        {renaming ? (
+          <input
+            className="field !rounded-lg !py-1 min-w-0 flex-1 text-sm"
+            value={draft}
+            maxLength={200}
+            autoFocus
+            aria-label="שם הפריט"
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setDraft(e.target.value)}
+            onPointerDown={stop}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setDraft(li.item.title);
+                setRenaming(false);
+              }
+            }}
+            onBlur={() => {
+              const next = draft.replace(/\s+/g, " ").trim();
+              setRenaming(false);
+              if (next && next !== li.item.title) onRename(next);
+              else setDraft(li.item.title);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className={`min-w-0 flex-1 text-start font-medium leading-snug hover:text-blue-dark ${expanded ? "line-clamp-2 text-[0.95rem]" : "truncate text-sm"}`}
+            aria-expanded={expanded}
+            data-tip="לחיצה פותחת פרטים. לחיצה כפולה משנה שם"
+            onClick={onToggle}
+            onDoubleClick={() => {
+              setDraft(li.item.title);
+              setRenaming(true);
+            }}
+          >
+            {li.item.title}
+          </button>
+        )}
         <div className="flex items-center gap-1.5 text-muted shrink-0 pe-1">
           {duration && (
             <span className="text-orange" data-tip={duration.label}>
@@ -438,6 +476,18 @@ function ItemRow({
                 <t.icon size={16} strokeWidth={2} />
               </button>
             ))}
+            <button
+              type="button"
+              className="btn-icon !p-1.5"
+              data-tip="שינוי שם הפריט (מתעדכן בכל השיעורים שבהם הוא מופיע)"
+              aria-label="שינוי שם הפריט"
+              onClick={() => {
+                setDraft(li.item.title);
+                setRenaming(true);
+              }}
+            >
+              <Pencil size={16} strokeWidth={2} />
+            </button>
             <span className="ms-auto inline-flex items-center gap-1 rounded-full bg-page px-2.5 py-0.5 text-[0.7rem] text-muted" data-tip="מאיפה הפריט">
               {li.item.kind === "openstuff" ? <OpenstuffMark size={12} /> : <Link2 size={12} strokeWidth={2} />}
               {li.item.kind === "openstuff" ? "חומר פתוח" : (li.item.siteName ?? "קישור חיצוני")}
@@ -545,14 +595,18 @@ function PasteZone({
   busy,
   compact,
   onHtml,
+  onImages,
 }: {
   onUrls: (urls: string[]) => void;
   busy: boolean;
   compact?: boolean;
   // כשמוגדר: אפשר להדביק כאן גם קוד HTML שלם, ויש כפתור שפותח את חלון ההדבקה.
   onHtml?: (html?: string) => void;
+  // כשמוגדר: אפשר להדביק, לגרור או לבחור תמונות (כמה בבת אחת).
+  onImages?: (files: File[]) => void;
 }) {
   const [value, setValue] = useState("");
+  const picker = useRef<HTMLInputElement | null>(null);
   function submit(text: string) {
     const urls = extractUrls(text);
     if (urls.length) {
@@ -561,25 +615,76 @@ function PasteZone({
     }
   }
   return (
-    <div className={`flex items-center gap-1 rounded-xl border border-dashed border-blue/40 bg-blue-soft/40 ${compact ? "px-2 py-1.5" : "p-2.5"}`}>
-      {onHtml && (
-        <button
-          type="button"
-          className="btn-icon shrink-0 !p-1 !text-blue-dark"
-          data-tip="הדבקת קוד HTML: משחק, לומדה או סימולציה מקנבס של בינה, עם נתוני שימוש"
-          aria-label="הדבקת קוד HTML"
-          onClick={() => onHtml()}
-        >
-          <CodeXml size={16} strokeWidth={2} />
-        </button>
-      )}
+    <div
+      className={`flex items-center gap-1 rounded-xl border border-dashed border-blue/40 bg-blue-soft/40 ${compact ? "px-2 py-1.5" : "p-2.5"}`}
+      // גרירת קבצי תמונה מהמחשב ישר לשדה.
+      onDragOver={(e) => onImages && e.dataTransfer.types.includes("Files") && e.preventDefault()}
+      onDrop={(e) => {
+        const images = onImages ? imageFiles(e.dataTransfer.files) : [];
+        if (images.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          onImages?.(images);
+        }
+      }}
+    >
+      {/* שלושה סוגי הדבקה: תמונה, קישור וקוד הטמעה. הכפתורים מסמנים מה אפשר, והאייקון האחרון אומר שאפשר כמה בבת אחת. */}
+      <span className="flex shrink-0 items-center gap-0.5 text-blue-dark">
+        {onImages && (
+          <>
+            <button
+              type="button"
+              className="btn-icon !p-1 !text-blue-dark"
+              data-tip="תמונה: מדביקים (Ctrl+V), גוררים או בוחרים קבצים, כמה בבת אחת"
+              aria-label="הוספת תמונות"
+              disabled={busy}
+              onClick={() => picker.current?.click()}
+            >
+              <ImageIcon size={16} strokeWidth={2} />
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              hidden
+              onChange={(e) => {
+                const images = imageFiles(e.target.files);
+                if (images.length) onImages(images);
+                e.target.value = "";
+              }}
+            />
+          </>
+        )}
+        <span className="p-1" data-tip="קישורים: אפשר להדביק כמה בבת אחת, שורה לכל קישור">
+          <Link2 size={16} strokeWidth={2} />
+        </span>
+        {onHtml && (
+          <button
+            type="button"
+            className="btn-icon !p-1 !text-blue-dark"
+            data-tip="קוד הטמעה או HTML: משחק, לומדה או סימולציה מקנבס של בינה, עם נתוני שימוש"
+            aria-label="הדבקת קוד HTML"
+            onClick={() => onHtml()}
+          >
+            <CodeXml size={16} strokeWidth={2} />
+          </button>
+        )}
+      </span>
       <input
-        className="w-full bg-transparent outline-none text-sm placeholder:text-blue-dark/60 text-center"
-        placeholder={busy ? "מוסיפים…" : onHtml ? "הדביקו קישור/ים או קוד HTML" : "הדביקו קישור/ים"}
+        className="w-full min-w-0 bg-transparent outline-none text-sm font-medium placeholder:text-blue-dark/70 text-center"
+        placeholder={busy ? "מוסיפים…" : "הדביקו"}
         value={value}
         disabled={busy}
         onChange={(e) => setValue(e.target.value)}
         onPaste={(e) => {
+          // תמונה מהלוח (צילום מסך או "העתק תמונה") נכנסת ישר לשיעור.
+          const images = onImages ? imageFiles(e.clipboardData.files) : [];
+          if (images.length) {
+            e.preventDefault();
+            onImages?.(images);
+            return;
+          }
           const text = e.clipboardData.getData("text");
           if (onHtml && looksLikeHtml(text)) {
             e.preventDefault();
@@ -592,8 +697,11 @@ function PasteZone({
           }
         }}
         onKeyDown={(e) => e.key === "Enter" && submit(value)}
-        aria-label="הדבקת קישורים"
+        aria-label="הדבקת קישורים ותמונות"
       />
+      <span className="shrink-0 p-1 text-blue-dark/60" data-tip="אפשר להדביק, לגרור או לבחור כמה פריטים בבת אחת" aria-hidden>
+        <Files size={16} strokeWidth={2} />
+      </span>
     </div>
   );
 }
@@ -622,6 +730,7 @@ function LessonColumn({
   onItemDelete,
   onPublish,
   onItemType,
+  onItemRename,
   subCounts,
   onSubs,
   onPreview,
@@ -652,6 +761,7 @@ function LessonColumn({
   onItemDelete: (id: number) => void;
   onPublish: (li: LessonItem) => void;
   onItemType: (itemId: number, type: string) => void;
+  onItemRename: (itemId: number, title: string) => void;
   subCounts: SubCounts;
   onSubs: (li: LessonItem) => void;
   onPreview: (li: LessonItem) => void;
@@ -786,6 +896,7 @@ function LessonColumn({
               onDelete={() => onItemDelete(li.id)}
               onPublish={() => onPublish(li)}
               onType={(type) => onItemType(li.itemId, type)}
+              onRename={(title) => onItemRename(li.itemId, title)}
               subs={subCounts.members ? { members: subCounts.members, submitted: subCounts.counts[li.id]?.submitted ?? 0, help: subCounts.counts[li.id]?.help ?? 0 } : undefined}
               onSubs={() => onSubs(li)}
               onPreview={() => onPreview(li)}
@@ -802,7 +913,7 @@ function LessonColumn({
           שחררו כאן
         </div>
       ) : (
-        <PasteZone onUrls={onAddUrls} busy={busy} compact onHtml={(html) => onHtml({ lessonId: lesson.id, html })} />
+        <PasteZone onUrls={onAddUrls} busy={busy} compact onImages={onAddImages} onHtml={(html) => onHtml({ lessonId: lesson.id, html })} />
       )}
     </section>
   );
@@ -1771,6 +1882,28 @@ export default function Board({ groupId }: { groupId: number }) {
     }
   }
 
+  // שם הפריט שייך לפריט עצמו, ולכן מתעדכן בכל מקום שבו הוא מופיע.
+  async function itemRename(itemId: number, title: string) {
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            lessons: prev.lessons.map((l) => ({
+              ...l,
+              items: l.items.map((x) => (x.item.id === itemId ? { ...x, item: { ...x.item, title } } : x)),
+            })),
+            crossItems: prev.crossItems.map((c) => (c.item.id === itemId ? { ...c, item: { ...c.item, title } } : c)),
+          }
+        : prev,
+    );
+    try {
+      await api(`/api/items/${itemId}`, "PATCH", { title });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "שינוי השם נכשל");
+      await load();
+    }
+  }
+
   async function itemDelete(id: number) {
     try {
       await api(`/api/lesson-items/${id}`, "DELETE");
@@ -2093,6 +2226,7 @@ export default function Board({ groupId }: { groupId: number }) {
                       onItemDelete={itemDelete}
                       onPublish={setPublishFor}
                       onItemType={itemType}
+                      onItemRename={itemRename}
                       onPublishLesson={() => setPublishLessonFor(l)}
                       onPresent={() => setPresenting(l.id)}
                       onToggleOpen={() => toggleLessonOpen(l)}

@@ -468,12 +468,18 @@ export async function addExistingItem(lessonId: number, teacherId: number, itemI
 }
 
 // תיקון סוג התוכן של פריט (למשל כשהניחוש לקישור חיצוני שגוי). חל על הפריט בכל השיעורים.
-export async function updateItem(id: number, teacherId: number, patch: { contentType?: string }) {
+export async function updateItem(id: number, teacherId: number, patch: { contentType?: string; title?: string }) {
   const db = await getDb();
   const [item] = await db.select({ id: items.id, teacherId: items.teacherId }).from(items).where(eq(items.id, id)).limit(1);
   if (!item || item.teacherId !== teacherId) throw new HttpError(404, "הפריט לא נמצא");
   if (patch.contentType !== undefined) {
     await db.update(items).set({ contentType: patch.contentType }).where(eq(items.id, id));
+  }
+  // שם הפריט שייך לפריט עצמו, ולכן משתנה בכל השיעורים שבהם הוא מופיע. הפוסט המקורי בחומר פתוח לא משתנה.
+  if (patch.title !== undefined) {
+    const title = patch.title.replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!title) throw new HttpError(400, "השם לא יכול להיות ריק");
+    await db.update(items).set({ title }).where(eq(items.id, id));
   }
 }
 
