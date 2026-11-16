@@ -228,6 +228,16 @@ function typeOf(item: { kind: string; contentType?: string | null }): string {
   return item.contentType ?? KIND_TO_TYPE[item.kind] ?? "אחר";
 }
 
+// קוד הטמעה קצר (למשל מ-Canva או יוטיוב) הופך לקישור שבתוכו, במקום להיפתח כפעילות HTML.
+function iframeSrc(text: string): string | null {
+  const t = text.trim();
+  if (t.length > 4000 || /<script/i.test(t)) return null;
+  const m = t.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+  if (!m) return null;
+  const src = m[1].replace(/&amp;/g, "&").replace(/&#x2F;/gi, "/");
+  return /^https?:\/\//i.test(src) ? src : src.startsWith("//") ? `https:${src}` : null;
+}
+
 function extractUrls(text: string): string[] {
   return text
     .split(/[\s,]+/)
@@ -325,8 +335,14 @@ function ItemRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
-      className={`bg-white border rounded-xl ${expanded ? "border-line shadow-sm" : "border-line/70"}`}
+      className={`relative bg-white border rounded-xl ${expanded ? "border-line shadow-sm" : "border-line/70"}`}
     >
+      {/* משך מתוכנן: קו כתום בקצה הכרטיס. המשמעות בריחוף, והבורר בפרטים. */}
+      {duration && (
+        <span className="absolute inset-y-2 end-1 flex w-2 justify-center">
+          <span className="block h-full w-[3px] rounded-full bg-orange" data-tip={`משך: ${duration.label}`} data-tip-edge="left" />
+        </span>
+      )}
       {/* השורה הסגורה: תמונה עם תג סוג, שם, ורק מצבים שיש להם משמעות (זמן, מטלה, נתוני שימוש). כל השאר בפרטים. */}
       <div className="flex items-center gap-2.5 p-1.5 cursor-grab touch-none" {...attributes} {...listeners}>
         <span className="relative shrink-0">
@@ -377,11 +393,6 @@ function ItemRow({
           </button>
         )}
         <div className="flex items-center gap-1.5 text-muted shrink-0">
-          {duration && !expanded && (
-            <span className="text-orange" data-tip={duration.label}>
-              <DurationIcon kind={duration.key} size={15} />
-            </span>
-          )}
           {li.isAssignment &&
             (subs && subs.members > 0 ? (
               <button
@@ -676,6 +687,12 @@ function PasteZone({
             return;
           }
           const text = e.clipboardData.getData("text");
+          const embedded = iframeSrc(text);
+          if (embedded) {
+            e.preventDefault();
+            onUrls([embedded]);
+            return;
+          }
           if (onHtml && looksLikeHtml(text)) {
             e.preventDefault();
             onHtml(text);
@@ -766,8 +783,6 @@ function LessonColumn({
   const [title, setTitle] = useState(lesson.title);
   // אקורדיון: הפריטים דחוסים, ורק אחד נפתח בכל פעם (בלחיצה על החץ שלו).
   const [openItem, setOpenItem] = useState<number | null>(null);
-  // הערכה גסה לפי הסקאלה; "יחידה ארוכה" לא נספרת כי היא לא שייכת לשיעור אחד.
-  const total = lesson.items.reduce((sum, li) => sum + (DURATIONS.find((d) => d.key === li.duration)?.minutes ?? 0), 0);
 
   return (
     <section
@@ -835,11 +850,6 @@ function LessonColumn({
           className="min-w-0 flex-1 bg-transparent font-bold text-lg outline-none"
           aria-label="שם השיעור"
         />
-        {total > 0 && (
-          <span className="shrink-0 rounded-full bg-blue-soft text-blue-dark text-xs font-medium px-2.5 py-1 tabular-nums" data-tip="הערכה לפי משך הפריטים">
-            כ־{total} דק׳
-          </span>
-        )}
         {/* מצב אחד שחשוב לראות (פתוח לתלמידים), פעולה ראשית אחת (הצגה), והשאר בתפריט. */}
         {lesson.openedAt && (
           <span className="shrink-0 text-green-600" data-tip="השיעור פתוח לתלמידים">

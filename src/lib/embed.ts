@@ -36,7 +36,8 @@ function known(u: URL): EmbedResult | null {
     return id ? { embedUrl: `https://drive.google.com/file/d/${id}/preview`, provider: "Google Drive" } : null;
   }
   if (host === "canva.com") {
-    const m = path.match(/^\/design\/([\w-]+)\/([\w-]+)\/(?:view|watch)/);
+    // גם קישור שיתוף שמסתיים ב-edit (כך נראה קישור קצר של canva.link אחרי ההפניה): הטוקן שבו מציג את המצגת בתצוגת הטמעה.
+    const m = path.match(/^\/design\/([\w-]+)\/([\w-]+)\/(?:view|watch|edit)/);
     return m ? { embedUrl: `https://www.canva.com/design/${m[1]}/${m[2]}/view?embed`, provider: "Canva" } : null;
   }
   if (host === "view.genially.com" || host === "view.genial.ly") {
@@ -99,8 +100,11 @@ export async function resolveEmbed(rawUrl: string): Promise<EmbedResult> {
   // אתר לא מוכר: מותר להטמיע רק אם הוא לא אוסר זאת בכותרות, ורק ב-https (אחרת הדפדפן חוסם תוכן מעורב).
   try {
     const res = await safeFetch(u.toString());
-    if (res.status >= 400) return { embedUrl: null, provider: null };
     const final = new URL(res.finalUrl);
+    // קישור מקוצר לספק מוכר (canva.link): ההפניה מגלה את הכתובת האמיתית, גם כשהדף עצמו חוסם בוטים (403).
+    const resolved = final.toString() !== u.toString() ? known(final) : null;
+    if (resolved) return resolved;
+    if (res.status >= 400) return { embedUrl: null, provider: null };
     if (final.protocol !== "https:") return { embedUrl: null, provider: null };
     if (res.frameOptions.trim()) return { embedUrl: null, provider: null };
     const ancestors = res.csp.match(/frame-ancestors([^;]*)/i)?.[1]?.trim();
