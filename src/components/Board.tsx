@@ -25,6 +25,7 @@ import PublishLessonDialog from "./board-publish-lesson";
 import PreviewDialog from "./board-preview";
 import LinkPreviewDialog from "./board-link-preview";
 import LessonMode from "./board-lesson-mode";
+import { Menu, MenuDivider, MenuItem, PickPill } from "./ui-menu";
 import SubmissionsDialog from "./board-submissions";
 import { imageFiles, imageFileToDataUrl } from "./image-upload";
 import GroupSettings from "./board-settings";
@@ -38,7 +39,6 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
-  Clock,
   Copy,
   GripVertical,
   Info,
@@ -57,6 +57,7 @@ import {
   EyeOff,
   GraduationCap,
   MonitorPlay,
+  MoreHorizontal,
   Pin,
   Plus,
   Presentation,
@@ -66,7 +67,6 @@ import {
   Share2,
   Smartphone,
   Sparkles,
-  StickyNote,
   UserRoundCheck,
   Video,
   X,
@@ -185,12 +185,6 @@ function DurationIcon({ kind, size = 16 }: { kind: string; size?: number }) {
 }
 
 // הסימן של חומר פתוח (הסלסול והנקודה מהלוגו), ולא ספר פתוח שנקרא בהמון דרכים אחרות.
-function OpenstuffMark({ size = 16 }: { size?: number; strokeWidth?: number }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src="/openstuff-mark.png" alt="" width={size + 4} height={size + 4} draggable={false} className="shrink-0" />
-  );
-}
 
 // סוג התוכן הוא הקטגוריות של חומר פתוח, עם אותם אייקונים שהאתר משתמש בהם בכרטיסים.
 const CONTENT_TYPES = [
@@ -324,8 +318,6 @@ function ItemRow({
   const [draft, setDraft] = useState(li.item.title);
   const itemType = typeOf(li.item);
   const TypeIcon = TYPE_ICON[itemType] ?? FileGeneric;
-  const phase = PHASES.find((p) => p.name === li.phase);
-  const PhaseIcon = phase?.icon;
   const duration = DURATIONS.find((d) => d.key === li.duration);
   const stop = (e: React.PointerEvent) => e.stopPropagation();
 
@@ -335,8 +327,17 @@ function ItemRow({
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
       className={`bg-white border rounded-xl ${expanded ? "border-line shadow-sm" : "border-line/70"}`}
     >
+      {/* השורה הסגורה: תמונה עם תג סוג, שם, ורק מצבים שיש להם משמעות (זמן, מטלה, נתוני שימוש). כל השאר בפרטים. */}
       <div className="flex items-center gap-2.5 p-1.5 cursor-grab touch-none" {...attributes} {...listeners}>
-        <Thumb item={li.item} size={expanded ? 44 : 34} />
+        <span className="relative shrink-0">
+          <Thumb item={li.item} size={expanded ? 44 : 36} />
+          <span
+            className="absolute -bottom-1 -start-1 flex h-[1.15rem] w-[1.15rem] items-center justify-center rounded-full text-white ring-2 ring-white"
+            style={{ background: TYPE_COLOR[itemType] ?? "var(--ink)" }}
+          >
+            <TypeIcon size={10} strokeWidth={2.5} />
+          </span>
+        </span>
         {renaming ? (
           <input
             className="field !rounded-lg !py-1 min-w-0 flex-1 text-sm"
@@ -366,7 +367,6 @@ function ItemRow({
             type="button"
             className={`min-w-0 flex-1 text-start font-medium leading-snug hover:text-blue-dark ${expanded ? "line-clamp-2 text-[0.95rem]" : "truncate text-sm"}`}
             aria-expanded={expanded}
-            data-tip="לחיצה פותחת פרטים. לחיצה כפולה משנה שם"
             onClick={onToggle}
             onDoubleClick={() => {
               setDraft(li.item.title);
@@ -376,8 +376,8 @@ function ItemRow({
             {li.item.title}
           </button>
         )}
-        <div className="flex items-center gap-1.5 text-muted shrink-0 pe-1">
-          {duration && (
+        <div className="flex items-center gap-1.5 text-muted shrink-0">
+          {duration && !expanded && (
             <span className="text-orange" data-tip={duration.label}>
               <DurationIcon kind={duration.key} size={15} />
             </span>
@@ -398,9 +398,11 @@ function ItemRow({
                 {subs.submitted}/{subs.members}
               </button>
             ) : (
-              <span className="text-orange" data-tip="מטלת הגשה">
-                <Pin size={14} strokeWidth={2} />
-              </span>
+              !expanded && (
+                <span className="text-orange" data-tip="מטלת הגשה">
+                  <Pin size={14} strokeWidth={2} />
+                </span>
+              )
             ))}
           {li.item.kind === "html" && (
             <button
@@ -419,38 +421,9 @@ function ItemRow({
               {act && act.members > 0 ? `${act.students}/${act.members}` : null}
             </button>
           )}
-          {li.note && !expanded && (
-            <span data-tip="יש הערה">
-              <StickyNote size={14} strokeWidth={2} />
-            </span>
-          )}
-          {PhaseIcon && (
-            <span className="text-blue-dark" data-tip={li.phase ?? ""}>
-              <PhaseIcon size={15} strokeWidth={2} />
-            </span>
-          )}
-          <span data-tip={itemType} style={{ color: TYPE_COLOR[itemType] ?? "var(--ink)" }}>
-            <TypeIcon size={15} strokeWidth={2} />
-          </span>
-          <button type="button" className="btn-icon !p-1" data-tip="תצוגה מקדימה" aria-label="תצוגה מקדימה" onPointerDown={stop} onClick={onPreview}>
-            <Info size={15} strokeWidth={2} />
-          </button>
-          <a
-            className="btn-icon !p-1"
-            href={li.item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            draggable={false}
-            data-tip="פתיחה בחלון חדש"
-            aria-label="פתיחה בחלון חדש"
-            onPointerDown={stop}
-          >
-            <ExternalLink size={15} strokeWidth={2} />
-          </a>
           <button
             type="button"
             className="btn-icon !p-1"
-            data-tip={expanded ? "סגירת הפרטים" : "פרטים: סוג, שלב, זמן והערה"}
             aria-label={expanded ? "סגירת פרטי הפריט" : "פתיחת פרטי הפריט"}
             aria-expanded={expanded}
             onPointerDown={stop}
@@ -462,120 +435,8 @@ function ItemRow({
       </div>
 
       {expanded && (
-        <div className="px-2.5 pb-2.5 pt-1 flex flex-col gap-2" onPointerDown={stop}>
-          <div className="flex flex-wrap items-center gap-1">
-            {CONTENT_TYPES.filter((t) => t.name !== "תבנית").map((t) => (
-              <button
-                key={t.name}
-                className={`btn-icon !p-1.5 ${itemType === t.name ? "!bg-ink !text-white" : ""}`}
-                data-tip={t.name}
-                aria-label={`סוג: ${t.name}`}
-                aria-pressed={itemType === t.name}
-                onClick={() => onType(t.name)}
-              >
-                <t.icon size={16} strokeWidth={2} />
-              </button>
-            ))}
-            <button
-              type="button"
-              className="btn-icon !p-1.5"
-              data-tip="שינוי שם הפריט (מתעדכן בכל השיעורים שבהם הוא מופיע)"
-              aria-label="שינוי שם הפריט"
-              onClick={() => {
-                setDraft(li.item.title);
-                setRenaming(true);
-              }}
-            >
-              <Pencil size={16} strokeWidth={2} />
-            </button>
-            <span className="ms-auto inline-flex items-center gap-1 rounded-full bg-page px-2.5 py-0.5 text-[0.7rem] text-muted" data-tip="מאיפה הפריט">
-              {li.item.kind === "openstuff" ? <OpenstuffMark size={12} /> : <Link2 size={12} strokeWidth={2} />}
-              {li.item.kind === "openstuff" ? "חומר פתוח" : (li.item.siteName ?? "קישור חיצוני")}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1">
-            {PHASES.map((p) => (
-              <button
-                key={p.name}
-                className={`btn-icon !p-1.5 ${li.phase === p.name ? "!bg-blue-soft !text-blue-dark" : ""}`}
-                data-tip={p.name}
-                aria-label={p.name}
-                onClick={() => onChange({ phase: li.phase === p.name ? null : p.name })}
-              >
-                <p.icon size={16} strokeWidth={2} />
-              </button>
-            ))}
-            <span className="w-px h-5 bg-line mx-1" aria-hidden />
-            <button
-              className={`btn-icon !p-1.5 ${li.isAssignment ? "!bg-orange/10 !text-orange" : ""}`}
-              data-tip={li.isAssignment ? "מטלת הגשה" : "סימון כמטלת הגשה"}
-              aria-label="מטלת הגשה"
-              onClick={() => onChange({ isAssignment: !li.isAssignment })}
-            >
-              <Pin size={16} strokeWidth={2} />
-            </button>
-            {li.item.kind !== "openstuff" &&
-              (li.item.publishedPostId ? (
-                <span className="btn-icon !p-1.5 !text-green-600" data-tip="נשלח לחומר פתוח וממתין לאישור">
-                  <Check size={16} strokeWidth={2} />
-                </span>
-              ) : (
-                <button className="btn-icon !p-1.5" data-tip="פרסום בחומר פתוח" aria-label="פרסום בחומר פתוח" onClick={onPublish}>
-                  <Send size={16} strokeWidth={2} />
-                </button>
-              ))}
-            {li.item.kind === "html" && (
-              <button className="btn-icon !p-1.5" data-tip="עדכון הקוד של הפעילות (למשל אחרי הוספת שכבת דיווח)" aria-label="עדכון הקוד" onClick={onEditHtml}>
-                <CodeXml size={16} strokeWidth={2} />
-              </button>
-            )}
-            <button className="btn-icon !p-1.5 ms-auto" data-tip="הסרה מהשיעור" aria-label="הסרה" onClick={onDelete}>
-              <X size={16} strokeWidth={2} />
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-muted me-1" data-tip="כמה זמן">
-              <Clock size={14} strokeWidth={2} />
-            </span>
-            {LESSON_DURATIONS.map((d) => (
-              <button
-                key={d.key}
-                className={`btn-icon !p-1.5 ${li.duration === d.key ? "!bg-orange/10 !text-orange" : ""}`}
-                data-tip={d.label}
-                aria-label={d.label}
-                onClick={() => onChange({ duration: li.duration === d.key ? null : d.key })}
-              >
-                <DurationIcon kind={d.key} size={16} />
-              </button>
-            ))}
-            {li.item.kind === "openstuff" && (
-              <button
-                className={`btn-icon !p-1.5 ms-auto ${li.shareNote ? "!bg-blue-soft !text-blue-dark" : ""}`}
-                data-tip={
-                  li.shareNote
-                    ? "ההערה תוצג בעמוד הפריט בחומר פתוח, עם שמך. לחצו לביטול"
-                    : "ההערה פרטית. לחצו כדי להציג אותה בעמוד הפריט בחומר פתוח"
-                }
-                aria-label="שיתוף ההערה"
-                aria-pressed={li.shareNote}
-                onClick={() => onChange({ shareNote: !li.shareNote })}
-              >
-                <Share2 size={16} strokeWidth={2} />
-              </button>
-            )}
-          </div>
-
-          {itemTags(li.item).length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {itemTags(li.item).map((t) => (
-                <span key={t} className="rounded-full bg-blue-soft text-blue-dark text-[0.7rem] px-2 py-0.5">
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-
+        <div className="flex flex-col gap-2.5 px-2.5 pb-2.5 pt-1" onPointerDown={stop}>
+          {/* קודם ההערה: זה מה שהמורה כותבת הכי הרבה. */}
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -584,6 +445,135 @@ function ItemRow({
             rows={2}
             className="block w-full rounded-xl border border-line bg-page/60 px-3 py-2 text-sm outline-none resize-none focus:border-blue"
           />
+
+          {/* שלושה בוררים עם שם, ומתג מטלה. כל אחד נפתח לרשימה עם שמות מלאים. */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <PickPill
+              label="סוג"
+              tone="ink"
+              value={itemType}
+              options={[
+                ...CONTENT_TYPES.filter((t) => t.name !== "תבנית").map((t) => ({
+                  key: t.name as string,
+                  label: t.name as string,
+                  icon: (
+                    <span style={{ color: TYPE_COLOR[t.name] }}>
+                      <t.icon size={14} strokeWidth={2} />
+                    </span>
+                  ),
+                })),
+                // "תמונה" אינה קטגוריה לבחירה, אבל מוצגת כשהיא הסוג הנוכחי.
+                ...(itemType === "תמונה" ? [{ key: "תמונה", label: "תמונה", icon: <ImageIcon size={14} strokeWidth={2} /> }] : []),
+              ]}
+              onPick={(key) => key && key !== "תמונה" && onType(key)}
+            />
+            <PickPill
+              label="שלב"
+              value={li.phase}
+              clearLabel="ללא שלב"
+              options={PHASES.map((p) => ({ key: p.name as string, label: p.name as string, icon: <p.icon size={14} strokeWidth={2} /> }))}
+              onPick={(key) => onChange({ phase: key })}
+            />
+            <PickPill
+              label="משך"
+              tone="orange"
+              value={li.duration}
+              clearLabel="ללא משך"
+              options={LESSON_DURATIONS.map((d) => ({ key: d.key as string, label: d.label as string, icon: <DurationIcon kind={d.key} size={14} /> }))}
+              onPick={(key) => onChange({ duration: key })}
+            />
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                li.isAssignment ? "border-orange/50 bg-orange/10 text-orange" : "border-line bg-white text-muted hover:border-blue"
+              }`}
+              aria-pressed={li.isAssignment}
+              data-tip={li.isAssignment ? "התלמידים מגישים את הפריט הזה. לחצו לביטול" : "סימון כמטלה: התלמידים יגישו תשובה או קישור"}
+              onClick={() => onChange({ isAssignment: !li.isAssignment })}
+            >
+              <Pin size={13} strokeWidth={2} /> מטלה
+            </button>
+          </div>
+
+          {/* פעולות: שתי הנפוצות בשם מלא, והשאר בתפריט "עוד". */}
+          <div className="flex items-center gap-1.5">
+            <button type="button" className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-blue-dark transition hover:bg-blue-soft" onClick={onPreview}>
+              <Info size={14} strokeWidth={2} /> תצוגה מקדימה
+            </button>
+            <a
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-blue-dark transition hover:bg-blue-soft"
+              href={li.item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              draggable={false}
+            >
+              <ExternalLink size={14} strokeWidth={2} /> פתיחה
+            </a>
+            <span className="ms-auto min-w-0 truncate text-[0.7rem] text-muted">
+              {li.item.kind === "openstuff" ? "חומר פתוח" : (li.item.siteName ?? "קישור חיצוני")}
+            </span>
+            <Menu ariaLabel="פעולות נוספות" tip="עוד" button={<MoreHorizontal size={16} strokeWidth={2} />}>
+              {(close) => (
+                <>
+                  <MenuItem
+                    icon={<Pencil size={15} strokeWidth={2} />}
+                    label="שינוי שם"
+                    hint="מתעדכן בכל השיעורים שבהם הפריט מופיע"
+                    onSelect={() => {
+                      close();
+                      setDraft(li.item.title);
+                      setRenaming(true);
+                    }}
+                  />
+                  {li.item.kind === "openstuff" && (
+                    <MenuItem
+                      icon={<Share2 size={15} strokeWidth={2} />}
+                      label="שיתוף ההערה בחומר פתוח"
+                      hint={li.shareNote ? "ההערה מוצגת בעמוד הפריט, עם שמך" : "ההערה פרטית"}
+                      checked={li.shareNote}
+                      onSelect={() => {
+                        onChange({ shareNote: !li.shareNote });
+                        close();
+                      }}
+                    />
+                  )}
+                  {li.item.kind !== "openstuff" &&
+                    (li.item.publishedPostId ? (
+                      <MenuItem icon={<Check size={15} strokeWidth={2} />} label="נשלח לחומר פתוח" hint="ממתין לאישור" disabled />
+                    ) : (
+                      <MenuItem
+                        icon={<Send size={15} strokeWidth={2} />}
+                        label="פרסום בחומר פתוח"
+                        onSelect={() => {
+                          close();
+                          onPublish();
+                        }}
+                      />
+                    ))}
+                  {li.item.kind === "html" && (
+                    <MenuItem
+                      icon={<CodeXml size={15} strokeWidth={2} />}
+                      label="עדכון הקוד של הפעילות"
+                      onSelect={() => {
+                        close();
+                        onEditHtml();
+                      }}
+                    />
+                  )}
+                  <MenuDivider />
+                  <MenuItem
+                    icon={<X size={15} strokeWidth={2} />}
+                    label="הסרה מהשיעור"
+                    danger
+                    onSelect={() => {
+                      close();
+                      onDelete();
+                    }}
+                  />
+                </>
+              )}
+            </Menu>
+          </div>
         </div>
       )}
     </div>
@@ -850,42 +840,66 @@ function LessonColumn({
             כ־{total} דק׳
           </span>
         )}
-        <button
-          type="button"
-          className={`btn-icon shrink-0 !p-1.5 ${lesson.openedAt ? "!text-green-600" : ""}`}
-          data-tip={lesson.openedAt ? "פתוח לתלמידים. לחצו כדי להסתיר" : "מוסתר מהתלמידים. לחצו כדי לפתוח להם את השיעור"}
-          aria-label="פתיחת השיעור לתלמידים"
-          aria-pressed={Boolean(lesson.openedAt)}
-          onClick={onToggleOpen}
-        >
-          {lesson.openedAt ? <Eye size={16} strokeWidth={2} /> : <EyeOff size={16} strokeWidth={2} />}
-        </button>
+        {/* מצב אחד שחשוב לראות (פתוח לתלמידים), פעולה ראשית אחת (הצגה), והשאר בתפריט. */}
+        {lesson.openedAt && (
+          <span className="shrink-0 text-green-600" data-tip="השיעור פתוח לתלמידים">
+            <Eye size={16} strokeWidth={2} />
+          </span>
+        )}
         {lesson.items.length > 0 && (
           <button
             type="button"
-            className="btn-icon shrink-0 !p-1.5"
-            data-tip="מצב שיעור: הצגה בכיתה במסך מלא"
+            className="btn-icon shrink-0 !p-1.5 !text-blue-dark"
+            data-tip="הצגה בכיתה במסך מלא"
             aria-label="מצב שיעור"
             onClick={onPresent}
           >
-            <MonitorPlay size={16} strokeWidth={2} />
+            <MonitorPlay size={17} strokeWidth={2} />
           </button>
         )}
-        {lesson.items.length > 0 && (
-          <button
-            type="button"
-            className={`btn-icon shrink-0 !p-1.5 ${lesson.publishedCollectionUrl ? "!text-green-600" : ""}`}
-            data-tip={lesson.publishedCollectionUrl ? "פורסם כאוסף. לחצו לעדכון" : "פרסום השיעור כאוסף בחומר פתוח"}
-            aria-label="פרסום השיעור כאוסף"
-            onClick={onPublishLesson}
-          >
-            <Send size={16} strokeWidth={2} />
-          </button>
-        )}
+        <Menu ariaLabel="פעולות השיעור" tip="עוד" button={<MoreHorizontal size={17} strokeWidth={2} />} width={240}>
+          {(close) => (
+            <>
+              <MenuItem
+                icon={lesson.openedAt ? <EyeOff size={15} strokeWidth={2} /> : <Eye size={15} strokeWidth={2} />}
+                label={lesson.openedAt ? "הסתרה מהתלמידים" : "פתיחה לתלמידים"}
+                hint={lesson.openedAt ? "השיעור מוצג עכשיו בדף הקבוצה שלהם" : "התלמידים יראו את השיעור בדף הקבוצה"}
+                onSelect={() => {
+                  close();
+                  onToggleOpen();
+                }}
+              />
+              {lesson.items.length > 0 && (
+                <>
+                  <MenuItem
+                    icon={<MonitorPlay size={15} strokeWidth={2} />}
+                    label="הצגה בכיתה"
+                    hint="מסך מלא, עם טיימר וכלי כיתה"
+                    onSelect={() => {
+                      close();
+                      onPresent();
+                    }}
+                  />
+                  <MenuItem
+                    icon={<Send size={15} strokeWidth={2} />}
+                    label={lesson.publishedCollectionUrl ? "עדכון האוסף בחומר פתוח" : "פרסום כאוסף בחומר פתוח"}
+                    hint={lesson.publishedCollectionUrl ? "השיעור כבר פורסם כאוסף" : "כל פריטי השיעור, לפי הסדר"}
+                    checked={Boolean(lesson.publishedCollectionUrl)}
+                    onSelect={() => {
+                      close();
+                      onPublishLesson();
+                    }}
+                  />
+                </>
+              )}
+            </>
+          )}
+        </Menu>
       </div>
 
       <SortableContext items={lesson.items.map((li) => `li-${li.id}`)} strategy={verticalListSortingStrategy}>
         <div className="flex flex-col gap-1.5 min-h-6">
+          {lesson.items.length === 0 && !dragging && <p className="px-1 text-xs text-muted">גוררים לכאן פריט מהמאגר שלמטה, או מדביקים קישור או תמונה.</p>}
           {lesson.items.map((li) => (
             <ItemRow
               key={li.id}
@@ -1408,30 +1422,52 @@ function CrossCard({
       className={`bg-white border border-line rounded-xl p-2 flex gap-2.5 items-center cursor-grab touch-none hover:border-blue transition ${isDragging ? "opacity-40" : ""}`}
     >
       <Thumb item={c.item} size={40} />
-      <a href={c.item.url} target="_blank" rel="noreferrer" draggable={false} className="flex-1 min-w-0 text-sm font-medium line-clamp-2 hover:text-blue-dark">
-        {c.item.title}
-      </a>
-      <button
-        className={`btn-icon ${c.duration === "unit" ? "!bg-orange/10 !text-orange" : ""}`}
-        data-tip={c.duration === "unit" ? "יחידה ארוכה, נפרשת על כמה מפגשים. לחצו לביטול" : "סימון כיחידה ארוכה (נפרשת על כמה מפגשים)"}
-        aria-label="יחידה ארוכה"
-        aria-pressed={c.duration === "unit"}
-        onClick={() => onToggleUnit(c)}
-      >
-        <DurationIcon kind="unit" size={16} />
-      </button>
-      <button
-        className="btn-icon"
-        data-tip={c.topicId === null ? "חל על כל הנושאים. לחצו לשיוך לנושא הנוכחי" : "משויך לנושא. לחצו להחלה על כל הנושאים"}
-        aria-label="שיוך לנושא"
-        onClick={() => onToggleScope(c)}
-        disabled={currentTopicId === null}
-      >
-        {c.topicId === null ? <Layers size={16} strokeWidth={2} /> : <span className="block h-3.5 w-3.5 rounded-full" style={{ background: topicColor }} />}
-      </button>
-      <button className="btn-icon" data-tip="הסרה" aria-label="הסרה" onClick={() => onRemove(c.id)}>
-        <X size={16} strokeWidth={2} />
-      </button>
+      <span className="flex-1 min-w-0 text-sm font-medium line-clamp-2">{c.item.title}</span>
+      {/* מצבים מוצגים רק כשהם פעילים; הפעולות בתפריט אחד. */}
+      {c.duration === "unit" && (
+        <span className="shrink-0 text-orange" data-tip="יחידה ארוכה, נפרשת על כמה מפגשים">
+          <DurationIcon kind="unit" size={15} />
+        </span>
+      )}
+      {c.topicId !== null && <span className="block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: topicColor }} data-tip="משויך לנושא הנוכחי בלבד" />}
+      <Menu ariaLabel="פעולות הקישור" tip="עוד" button={<MoreHorizontal size={16} strokeWidth={2} />} width={240}>
+        {(close) => (
+          <>
+            <MenuItem icon={<ExternalLink size={15} strokeWidth={2} />} label="פתיחה בחלון חדש" href={c.item.url} onSelect={close} />
+            <MenuItem
+              icon={<DurationIcon kind="unit" size={15} />}
+              label="יחידה ארוכה"
+              hint="נפרשת על כמה מפגשים"
+              checked={c.duration === "unit"}
+              onSelect={() => {
+                close();
+                onToggleUnit(c);
+              }}
+            />
+            <MenuItem
+              icon={<Layers size={15} strokeWidth={2} />}
+              label="מוצג בכל הנושאים"
+              hint={c.topicId === null ? "לחיצה תשייך לנושא הנוכחי בלבד" : "כרגע משויך לנושא הנוכחי בלבד"}
+              checked={c.topicId === null}
+              disabled={currentTopicId === null}
+              onSelect={() => {
+                close();
+                onToggleScope(c);
+              }}
+            />
+            <MenuDivider />
+            <MenuItem
+              icon={<X size={15} strokeWidth={2} />}
+              label="הסרה"
+              danger
+              onSelect={() => {
+                close();
+                onRemove(c.id);
+              }}
+            />
+          </>
+        )}
+      </Menu>
     </div>
   );
 }
